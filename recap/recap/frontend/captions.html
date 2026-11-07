@@ -7,42 +7,75 @@
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
 <style>
-  /* Projector view: high contrast, huge type, readable from the back row. */
+  /* Projector view: same look as the desktop overlay. Black text on an opaque
+     white highlight, huge type, readable from the back row. */
   body { background: #0f1312; color: #f4f1e8; height: 100vh; overflow: hidden; }
-  #stage { position: fixed; inset: auto 0 0 0; padding: 0 4vw 5vh; transition: opacity .8s ease; opacity: 0; }
+  #stage { position: fixed; inset: auto 0 0 0; padding: 0 4vw 4vh; transition: opacity .8s ease; opacity: 0;
+    display: flex; flex-direction: column; align-items: center; gap: .35em; }
   #stage.visible { opacity: 1; }
-  .line { font-size: clamp(28px, 4.6vw, 64px); font-weight: 700; line-height: 1.2; margin: .25em 0; }
-  .line.old { color: #9aa49f; font-size: clamp(22px, 3.2vw, 44px); font-weight: 400; }
-  .line.partial { color: #cfe8df; }
+  .line { font-size: clamp(28px, 4.6vw, 64px); font-weight: 700; line-height: 1.25; margin: 0; max-width: 92vw;
+    text-align: center; }
+  .line span.hl { background: #fff; color: #000; padding: .04em .3em; box-decoration-break: clone;
+    -webkit-box-decoration-break: clone; }
+  .line.old { font-size: clamp(22px, 3.4vw, 46px); }
+  .pred { font-weight: 400; font-style: italic; color: #2b2b2b; }
+  #hint { font-size: clamp(16px, 1.9vw, 26px); max-width: 80vw; text-align: center; opacity: 0; transition: opacity .5s; }
+  #hint.show { opacity: 1; }
+  #hint span { background: #fff; color: #000; padding: .1em .45em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
   #corner { position: fixed; top: 12px; right: 16px; font-size: 14px; color: #6f7a76; }
+  #key { position: fixed; top: 12px; left: 16px; font-size: 14px; color: #6f7a76; }
 </style>
 </head>
 <body>
+<div id="key">→ <i>italic</i> = predicted, not yet said</div>
 <div id="corner"><span class="status-dot" id="dot"></span><span id="mode">connecting…</span></div>
-<div id="stage" aria-live="polite"></div>
+<div id="stage" aria-live="polite">
+  <div id="hint"></div>
+  <div id="lines"></div>
+</div>
 <script src="/common.js"></script>
 <script>
   // Shows Alex's words as he says them, only while captions are on.
-  // Nothing on this page is saved.
+  // Predicted words (when he stalls or tires) follow an arrow, in italic.
+  // Nothing on this page is saved. For a captions bar over any app, run client/overlay.py.
   const stage = document.getElementById("stage");
-  const finals = [];
-  let partial = "";
+  const linesEl = document.getElementById("lines");
+  const hintEl = document.getElementById("hint");
+  let finals = [];     // {id, text, predicted}
+  let partial = null;  // {id, text, predicted}
+  let hintTimer, quietTimer;
 
-  function render() {
-    const recent = finals.slice(-2);
-    stage.innerHTML = recent.map(t => `<div class="line old">${escapeHtml(t)}</div>`).join("") +
-      (partial ? `<div class="line partial">${escapeHtml(partial)}</div>` : "");
+  function lineHtml(e, cls) {
+    const pred = e.predicted ? ` <span class="pred">→ ${escapeHtml(e.predicted)}</span>` : "";
+    return `<p class="line ${cls}"><span class="hl">${escapeHtml(e.text)}${pred}</span></p>`;
   }
-  function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+  function render() {
+    const shown = finals.concat(partial ? [partial] : []).slice(-2);
+    linesEl.innerHTML = shown.map((e, i) => lineHtml(e, i === shown.length - 1 ? "" : "old")).join("");
+  }
+  function touch() {
+    clearTimeout(quietTimer);
+    quietTimer = setTimeout(() => { finals = []; partial = null; render(); }, 12000);
+  }
 
   liveSocket("/ws/captions", msg => {
     if (msg.type === "visibility") {
       stage.classList.toggle("visible", msg.captions_on);
       document.getElementById("mode").textContent = msg.captions_on ? "captions on" : "standing by";
-      if (!msg.captions_on) { finals.length = 0; partial = ""; render(); }
+      document.getElementById("key").hidden = msg.predict === false;
+      if (!msg.captions_on) { finals = []; partial = null; render(); }
     } else if (msg.type === "caption") {
-      if (msg.final) { finals.push(msg.text); partial = ""; } else { partial = msg.text; }
-      render();
+      const e = { id: msg.id, text: msg.text, predicted: "" };
+      if (msg.final) { finals = finals.concat([e]).slice(-2); partial = null; } else { partial = e; }
+      render(); touch();
+    } else if (msg.type === "assist") {
+      const e = finals.concat(partial ? [partial] : []).find(x => x.id === msg.id);
+      if (e) { if (msg.clean) e.text = msg.clean; e.predicted = msg.predicted || ""; render(); touch(); }
+    } else if (msg.type === "hint") {
+      hintEl.innerHTML = `<span><b>${escapeHtml(msg.term)}:</b> ${escapeHtml(msg.text)}</span>`;
+      hintEl.classList.add("show");
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => hintEl.classList.remove("show"), 9000);
     }
   }, live => document.getElementById("dot").classList.toggle("live", live));
 </script>

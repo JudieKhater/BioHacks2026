@@ -9,13 +9,25 @@ on the classroom screen, so the back row stops asking him to repeat himself. It 
 
 - **Captions only when he needs them.** Auto mode turns them on when his fatigue score rises; he can
   force them on or off at any time.
+- **Captions over everything.** A desktop overlay puts the captions on the bottom edge of the screen,
+  black text on a white highlight, on top of slides, videos or any app. No web page needs to be open.
+- **Predictive captions.** When he stutters, stalls or trails off, the caption shows his words with the
+  stutter removed, then a suggested ending in italics after an arrow (`So the oculomotor nerve controls
+  the → medial rectus muscle`). It's grounded in the lesson material, clearly marked as a guess, never
+  spoken aloud, and never added to the recap. He can turn it off.
+- **AI note-taker.** Live notes while he teaches: topic, key points, key terms, facts from the lesson
+  material that connect to what he's saying, and check-for-understanding questions. When he uses a key
+  term, a one-line definition appears above the captions.
+- **Speech check and guidance.** Live flags for the four speech subsystems (Green et al. 2013) plus
+  stutters and trailing sentences, with energy-conserving tips for right now.
 - **Speech battery.** He sees how much voice he has left today, so he can plan, not push.
 - **The recap comes back.** At the end of the day he ticks the sentences he said that matter most and
   publishes them for students: his exact words, chosen by him.
 - **Morning breathing trainer.** Guides expiratory muscle strength training (EMST) reps, the one
   bulbar/respiratory exercise with randomized-trial evidence in ALS, if his therapist prescribes it.
 - **Clinic view.** Daily speech-rate, loudness and words-per-breath trends between his 3-monthly visits,
-  shared only while he allows it.
+  and his speaking-rate slope compared with published ALS decline rates (Eshghi et al. 2022), shared only
+  while he allows it.
 
 We deliberately **do not** include tongue, lip or jaw strengthening: ALS speech guidance advises against
 it. Energy conservation is the goal.
@@ -28,28 +40,59 @@ it. Energy conservation is the goal.
 git clone <this repo> && cd recap
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env                                  # fill in keys later; works without them
+cp .env.example .env                                  # add GEMINI_API_KEY; works without it
 uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Open http://localhost:8000. In a second terminal, run the demo with no hardware:
+Open http://127.0.0.1:8000. In a second terminal, run the demo with no hardware:
 
 ```bash
+python client/overlay.py                    # captions bar over the whole screen (keep it running)
+python client/simulator.py --lesson         # CN III lesson with stutters and stalls: predictions,
+                                            # term definitions, live notes (open /notes.html)
 python client/simulator.py --history 21     # 3 weeks of past data for the clinic charts
 python client/simulator.py --day --captions # Alex's school day in 2 minutes
 python client/simulator.py --breath         # breathing-trainer reps (open /trainer.html first)
 ```
 
 Put `/captions.html` on one screen and `/alex.html` on another: around "2 pm" the battery drops below
-half and captions fade in.
+half and captions fade in. The overlay follows the same Off / Auto / On control.
 
-With a real mic:
+Use `127.0.0.1`, not `localhost`, for `RECAP_SERVER`: on Windows `localhost` tries IPv6 first and adds
+about 2 seconds to every request, which delays every caption.
+
+### Caption overlay (`client/overlay.py`)
+Uses Python's built-in tkinter; nothing extra to install. Click-through on Windows, so it never blocks
+the mouse. Stop it with Ctrl+C in its terminal.
 
 ```bash
-python client/audio_client.py --list-devices
-python client/audio_client.py --device <index>         # needs ELEVENLABS_API_KEY in .env
-python client/audio_client.py --no-asr                 # no key: features only, no captions
+python client/overlay.py --demo                 # preview the look without a server
+python client/overlay.py --scale 1.3 --lines 2  # bigger text, two lines
+python client/overlay.py --no-hints             # no term definitions above the captions
+python client/overlay.py --movable              # drag to move, double-click to close
+python client/overlay.py --server https://yourdomain.co
 ```
+
+### Lesson material (`context/`)
+Drop PDFs, `.txt` or `.md` files in `context/`, or add them on the Notes page. They boost speech
+recognition for subject terms, ground the predictions, give the term definitions, and feed the notes.
+The demo file is the Group 5 A&P infographic on oculomotor nerve palsy.
+
+With a real mic (Windows: just double-click `start_session.bat`; it opens the server, the overlay and
+the mic client, each in its own window; `start_session.bat demo` plays the lesson instead):
+
+```bash
+python client/audio_client.py --captions on            # switch captions on and start listening
+python client/audio_client.py --list-devices
+python client/audio_client.py --device <index>
+python client/audio_client.py --no-asr                 # features only, no captions
+```
+
+Speech-to-text uses ElevenLabs Scribe (word by word) if `ELEVENLABS_API_KEY` is set, otherwise Gemini
+(`GEMINI_STT_MODEL`, default `gemini-3.5-transcribe`): the mic stream is cut into phrases at his pauses
+and each phrase is captioned about 1-2 s after he pauses. A phrase he breaks off mid-sentence becomes an
+unfinished caption, which is what triggers the predicted ending. Without `--captions on`, Auto mode keeps
+captions hidden until his fatigue score rises.
 
 With the ESP32 badge: flash `firmware/recap_badge/recap_badge.ino`, then
 `python client/serial_bridge.py --port <port>`.
@@ -64,14 +107,54 @@ Run tests: `python -m pytest -q`
  Lapel mic ──► audio_client.py ──► features every 5 s ──► POST /api/features ─┐
      │                                                                        ▼
      └──► ElevenLabs Scribe v2 Realtime ──► POST /api/captions        FatigueEngine
-                                                                     (baseline, score,
- ESP32 badge ─► serial_bridge.py ─► POST /api/sensor (throat effort)   hysteresis, mode)
-            └─────────────────────► POST /api/emst/sample                     │
-                                                                              ▼
-            Tiger Data / SQLite (numbers only) ◄──────────────────────── backend/app.py
-                                                                              │
-          /captions.html  /alex.html  /trainer.html  /recap.html  /clinic.html ◄┘ (WebSockets + REST)
+                                                │                    (baseline, score,
+                                                ▼                     hysteresis, mode)
+                       stutter cleanup ─► stall? ─► offline guess (instant)   │
+                       (speech_symptoms)            └─► Gemini guess (~1 s) │
+                                                │                             │
+ context/ lesson PDFs ─► ContextLibrary ────────┤ glossary, n-grams, passages │
+                                                ▼                             ▼
+ ESP32 badge ─► serial_bridge.py ─► /api/sensor, /api/emst/sample ─► backend/app.py ─► Tiger Data / SQLite
+                                                                              │        (numbers only)
+   client/overlay.py (desktop captions bar) ◄── /ws/captions ◄────────────────┤
+   /captions.html /notes.html /alex.html /trainer.html /recap.html /clinic.html ◄┘ (WebSockets + REST)
 ```
+
+### Predictive captions (`backend/predictor.py`)
+1. **Clean, don't rewrite.** `speech_symptoms.clean()` removes fillers (um, uh), cut-off starts
+   (`oculo- oculomotor`, `n-nerve`) and repeats (`the the`), keeping his words and punctuation.
+2. **Detect a stall.** A partial caption that hasn't changed for 1.2 s, or a sentence that ends on a
+   word that leaves it hanging (`the`, `from`, `are`) or a half-word (`vi-`).
+3. **Instant offline guess.** Finish a half-said word from the lesson glossary, then extend with an
+   n-gram model of the lesson material and his own finished sentences. Stops at a clause boundary.
+4. **Gemini refinement.** `GEMINI_LIVE_MODEL` (default `gemini-3.1-flash-lite`, about 1 s) gets the
+   relevant lesson passages and his last few sentences and returns `{completion, confidence}`.
+   Shown only above `PREDICT_MIN_CONFIDENCE`. If that model is overloaded it falls back to
+   `GEMINI_MODEL`; calls are throttled (`GEMINI_LIVE_MIN_INTERVAL`) and paused after a rate limit,
+   with the offline guess filling in.
+5. **Honesty.** Predictions are separate fields, drawn in italics after an arrow, and never stored in
+   the recap. "Sentences finished by prediction" is tracked as a symptom.
+
+### Live notes
+Every `NOTES_EVERY_SECONDS` while he talks, `GEMINI_MODEL` (default `gemini-3.5-flash`) turns the
+transcript plus lesson material into topic, key points, key terms, related facts from the material and
+check-for-understanding questions. At startup Gemini also builds a glossary from the material for the
+term-definition cards. Offline, the notes and definitions come from the material directly.
+
+### Speech check and guidance (`backend/speech_symptoms.py`)
+Grounded in the two papers in the repo root:
+- **Green et al. 2013** (*ALS & FTD* 14:494): speech has four subsystems. We map live measures onto them:
+  respiratory = words per breath and percent pause; phonatory = loudness drop and throat effort;
+  articulatory = speaking rate, stutters per 100 words, trailing sentences; resonatory = not measurable
+  without a nasal/oral two-mic headset, so it says so. The weekly check lists the paper's tasks (Bamboo
+  passage, sustained "ah", "Buy Bobby a puppy", "I owe you a yoyo today").
+- **Eshghi et al. 2022** (*Sci Rep* 12:15713): speaking rate under **120 wpm** and intelligibility under
+  **85 %** mark functional speech loss; mean decline 1.74 wpm/month (spinal onset) vs 4.16 (bulbar).
+  The clinic view fits a line to his morning speaking rate, compares the slope with these, and estimates
+  months to 120 wpm at that slope. Morning values are used to keep daily fatigue out of the trend.
+
+Guidance is rule-based (not generated) so it's predictable and reviewable: voice rest, shorter
+phrases, let the mic do the work, slow the start, relax the throat. No strengthening drills.
 
 ### The fatigue score (`backend/fatigue.py`)
 1. **Baseline.** Alex presses "Set baseline now" while fresh; the next 6 speaking windows are averaged.
@@ -102,8 +185,8 @@ All thresholds are in `.env` because a clinician would tune them.
 
 ### Recap: his words, never rewritten (`backend/recap_ai.py`)
 Gemini receives numbered sentences and returns only the **numbers** to keep. The server copies those
-sentences verbatim, so the model cannot change a word. With no key, an offline picker uses the
-biology keyterms.
+sentences verbatim, so the model cannot change a word. Stutters are removed first; predicted words and
+unfinished sentences are never offered. With no key, an offline picker uses the subject keyterms.
 
 ---
 
@@ -137,7 +220,8 @@ biology keyterms.
   `time_bucket()`; `speech_hourly` is a continuous aggregate with a refresh policy
   (`backend/schema_timescale.sql`). Set `DATABASE_URL` to your Tiger Cloud service.
 - **Vultr:** hosts the backend and pages (see below).
-- **Gemini:** recap sentence selection (numbers only) and the plain-language clinic summary.
+- **Gemini:** predictive captions, live notes, lesson glossary, recap sentence selection (numbers only)
+  and the plain-language clinic summary.
 - **Bambu Lab:** print the lanyard badge, throat-sensor holder and breathing-trainer body.
 - **Entire:** install it in this repo and code with your AI agents through it so checkpoints build up
   all weekend. Confirm judging details at their booth.
@@ -166,5 +250,10 @@ and the same `RECAP_TOKEN`; open pages once as `https://yourdomain.co/alex.html?
 ## Honest limitations
 - Tested on teammates simulating fatigue, not on ALS speech; thresholds need clinical tuning.
 - Speech recognition can be less accurate on dysarthric speech; keyterms help but don't solve it.
+- Predictions can be wrong. They are marked as guesses and he can switch them off, but a confident wrong
+  guess on a projector could still mislead a student; tune `PREDICT_MIN_CONFIDENCE` with real use.
+- The decline projection is a straight line through noisy daily data, not a prognosis.
+- Free-tier Gemini quotas are small and models get overloaded at peak times; live calls are throttled
+  and everything falls back to offline methods, which are more limited.
 - The breathing trainer is a prototype, not a calibrated EMST device; resistance must be set by a clinician.
 - A real product would need a clinical pilot and would likely be regulated as a medical device by Health Canada.

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recap Live Notes</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .topic { font-size: clamp(1.4rem, 3.4vw, 2rem); font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .two { display: grid; gap: 16px; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); margin-top: 16px; }
+  @media (max-width: 820px) { .two { grid-template-columns: 1fr; } }
+  ul.points { margin: 0; padding-left: 1.1em; } ul.points li { margin: .3em 0; }
+  dl.terms { margin: 0; } dl.terms dt { font-weight: 700; margin-top: .55em; } dl.terms dd { margin: .1em 0 0; color: var(--muted); }
+  .rel { border-left: 4px solid var(--chart-2); padding: 6px 10px; margin: 8px 0; background: var(--bg); border-radius: 0 8px 8px 0; }
+  #transcript { max-height: 520px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .tline { padding: 6px 8px; border-radius: 8px; background: var(--bg); }
+  .tline .t { color: var(--muted); font-size: .78rem; margin-right: 6px; }
+  .pred { font-style: italic; color: var(--chart-2); }
+  .partial { opacity: .7; }
+  .subs { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .sub { border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .sub h3 { margin: 0 0 6px; font-size: 1rem; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .lvl-ok { background: var(--good); color: #fff; } .lvl-watch { background: var(--chart-2); color: #111; }
+  .lvl-alert { background: var(--warn); color: #fff; } .lvl-unknown { background: var(--line); color: var(--ink); }
+  .tip { border-left: 4px solid var(--accent); padding: 8px 12px; margin: 8px 0; background: var(--bg); border-radius: 0 8px 8px 0; }
+  .tip.alert { border-color: var(--warn); } .tip.watch { border-color: var(--chart-2); }
+  .tip b { display: block; }
+  .stats { display: flex; gap: 18px; flex-wrap: wrap; margin: 8px 0 0; }
+  .stats div { font-size: .85rem; color: var(--muted); } .stats b { display: block; font-size: 1.3rem; color: var(--ink); }
+  textarea { width: 100%; min-height: 90px; font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); }
+  input[type=text] { font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg);
+    color: var(--ink); width: 100%; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font-size: .8rem; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); }
+  button.small { min-height: 40px; padding: 8px 14px; font-size: .95rem; }
+</style>
+</head>
+<body>
+<div class="wrap" style="max-width:1160px">
+  <header class="top"><h1>Live notes</h1><nav id="nav"></nav></header>
+
+  <section class="card">
+    <div class="row">
+      <div>
+        <p class="muted small" style="margin:0">Now discussing</p>
+        <p class="topic" id="topic">Waiting for Alex to start…</p>
+      </div>
+      <div style="text-align:right">
+        <p class="muted small" style="margin:0"><span class="status-dot" id="dot"></span><span id="src">connecting…</span></p>
+        <button class="small" id="refresh">Update notes now</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="two">
+    <div style="display:grid;gap:16px;align-content:start">
+      <section class="card"><h2>Key points</h2><ul class="points" id="points"><li class="muted">Notes build up as he talks.</li></ul></section>
+      <div class="grid">
+        <section class="card"><h2>Key terms</h2><dl class="terms" id="terms"></dl></section>
+        <section class="card"><h2>From your materials</h2><div id="related"><p class="muted small">Connections to the lesson material appear here.</p></div></section>
+      </div>
+      <section class="card"><h2>Check for understanding</h2><ul class="points" id="questions"><li class="muted">Questions appear once there's enough to ask about.</li></ul></section>
+    </div>
+    <section class="card">
+      <div class="row"><h2 style="margin:0">Transcript</h2><span class="muted small"><span class="pred">→ italic</span> = predicted</span></div>
+      <p class="muted small">His words, with stutters removed. Kept in memory for today only.</p>
+      <div id="transcript"></div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:16px">
+    <div class="row"><h2 style="margin:0">Speech check</h2><span class="muted small" id="symSub"></span></div>
+    <p class="muted small">The four speech subsystems (Green et al. 2013). Flags for Alex and his clinic, not a diagnosis.</p>
+    <div class="subs" id="subs"></div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <div class="grid" style="margin-top:16px">
+    <section class="card">
+      <h2>Guidance right now</h2>
+      <div id="tips"></div>
+      <p class="muted small">Energy conservation first: pacing and supports, never strengthening drills for tongue, lips or jaw.</p>
+    </section>
+    <section class="card">
+      <h2>Weekly speech check</h2>
+      <p class="muted small">Short tasks behind each measure. Do them at the same time of day each week, ideally morning.</p>
+      <ul class="points" id="weekly"></ul>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:16px">
+    <h2>Lesson material</h2>
+    <p class="muted small">Captions, predictions and notes are grounded in these. Add a PDF, or paste text.</p>
+    <div id="docs" class="small"></div>
+    <div class="chips" id="glossary"></div>
+    <div class="grid" style="margin-top:12px">
+      <div>
+        <input type="file" id="file" accept=".pdf,.txt,.md">
+        <button class="small" id="upload" style="margin-top:8px">Add file</button>
+      </div>
+      <div>
+        <input type="text" id="ctitle" placeholder="Title (e.g. Unit 4 notes)">
+        <textarea id="ctext" placeholder="Paste lesson notes or a reading…" style="margin-top:8px"></textarea>
+        <button class="small" id="paste" style="margin-top:8px">Add text</button>
+      </div>
+    </div>
+    <p class="small" id="ctxMsg"></p>
+  </section>
+</div>
+<script src="/common.js"></script>
+<script>
+  document.getElementById("nav").innerHTML = nav("Notes");
+  const $ = id => document.getElementById(id);
+  const lines = new Map();  // id -> {ts, text, predicted}
+  let partial = null;
+  const fmt = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  function showNotes(n) {
+    if (n.topic) $("topic").textContent = n.topic;
+    $("src").textContent = n.source === "gemini" ? `Gemini notes · ${n.updated ? fmt(n.updated) : ""}`
+      : n.source === "offline" ? "Offline notes (no Gemini)" : "Listening";
+    if ((n.summary || []).length) $("points").innerHTML = n.summary.map(s => `<li>${escapeHtml(s)}</li>`).join("");
+    if ((n.key_terms || []).length) $("terms").innerHTML = n.key_terms.map(k =>
+      `<dt>${escapeHtml(k.term)}</dt><dd>${escapeHtml(k.definition || "")}</dd>`).join("");
+    if ((n.related || []).length) $("related").innerHTML = n.related.map(r =>
+      `<div class="rel"><b>${escapeHtml(r.title || "")}</b><div class="small">${escapeHtml(r.detail || "")}</div></div>`).join("");
+    if ((n.questions || []).length) $("questions").innerHTML = n.questions.map(q => `<li>${escapeHtml(q)}</li>`).join("");
+  }
+
+  function renderTranscript() {
+    const el = $("transcript");
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    const rows = [...lines.values()].slice(-120).map(l =>
+      `<div class="tline"><span class="t">${fmt(l.ts)}</span>${escapeHtml(l.text)}` +
+      (l.predicted ? ` <span class="pred">→ ${escapeHtml(l.predicted)}</span>` : "") + `</div>`);
+    if (partial) rows.push(`<div class="tline partial">${escapeHtml(partial.text)}` +
+      (partial.predicted ? ` <span class="pred">→ ${escapeHtml(partial.predicted)}</span>` : "") + `</div>`);
+    el.innerHTML = rows.join("") || `<p class="muted small">Nothing yet.</p>`;
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  }
+
+  function showSymptoms(s) {
+    $("subs").innerHTML = s.subsystems.map(x => `<div class="sub"><h3>${escapeHtml(x.name)}
+        <span class="pill lvl-${x.level}">${x.level === "unknown" ? "n/a" : x.level}</span></h3>
+        <div class="small">${escapeHtml(x.detail)}</div><div class="muted small" style="margin-top:4px">${escapeHtml(x.why)}</div></div>`).join("");
+    const d = s.disfluency || {};
+    $("stats").innerHTML = [
+      ["Stumbles / 100 words", d.disfluencies_per_100_words ?? "–"],
+      ["Repeated words", d.repetitions ?? 0], ["Cut-off words", d.part_words ?? 0],
+      ["Trailing sentences", d.trailing_pct == null ? "–" : d.trailing_pct + "%"],
+      ["Sentences finished by prediction", s.predictions_used ?? 0],
+      ["Speech battery", (s.battery ?? "–") + "%"],
+    ].map(([k, v]) => `<div><b>${v}</b>${k}</div>`).join("");
+    $("symSub").textContent = `last ${d.window_min || 5} min · markers: <${s.markers.speech_loss_wpm} wpm, <${s.markers.intelligibility_loss_pct}% intelligibility`;
+    $("tips").innerHTML = s.guidance.map(t =>
+      `<div class="tip ${t.level}"><b>${escapeHtml(t.title)}</b><span class="small">${escapeHtml(t.text)}</span></div>`).join("");
+  }
+
+  function showContext(c) {
+    $("docs").innerHTML = c.docs.length ? c.docs.map(d => `<div>📄 <b>${escapeHtml(d.title)}</b> <span class="muted">· ${d.words} words</span></div>`).join("")
+      : `<p class="muted">No material loaded. Predictions fall back to what he has said today.</p>`;
+    $("glossary").innerHTML = (c.terms || []).slice(0, 24).map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("") +
+      (c.glossary_source === "gemini" ? `<span class="muted small">glossary by Gemini</span>` : "");
+  }
+
+  liveSocket("/ws/notes", m => {
+    if (m.type === "notes") showNotes(m);
+    else if (m.type === "symptoms") showSymptoms(m);
+    else if (m.type === "context") showContext(m);
+    else if (m.type === "line") { lines.set(m.id, { ts: m.ts, text: m.text, predicted: m.predicted }); partial = null; renderTranscript(); }
+    else if (m.type === "assist") {
+      if (m.final && lines.has(m.id)) { const l = lines.get(m.id); l.text = m.clean || l.text; l.predicted = m.predicted; }
+      else if (!m.final) partial = { text: m.clean, predicted: m.predicted };
+      renderTranscript();
+    } else if (m.type === "reset") { lines.clear(); partial = null; renderTranscript(); $("topic").textContent = "Waiting for Alex to start…"; }
+  }, live => $("dot").classList.toggle("live", live));
+
+  api("/api/notes").then(r => { r.transcript.forEach(t => lines.set(t.id, t)); renderTranscript(); });
+  api("/api/symptoms").then(s => {
+    $("weekly").innerHTML = s.weekly_check.map(w => `<li><b>${escapeHtml(w.task)}</b><br><span class="muted small">${escapeHtml(w.subsystem)}: ${escapeHtml(w.measure)}</span></li>`).join("");
+  });
+
+  $("refresh").onclick = () => api("/api/notes/refresh", {});
+  $("paste").onclick = async () => {
+    const text = $("ctext").value.trim();
+    if (!text) return;
+    showContext(await api("/api/context", { title: $("ctitle").value || "Pasted notes", text }));
+    $("ctext").value = ""; $("ctxMsg").textContent = "Added. Gemini is building a glossary in the background.";
+  };
+  $("upload").onclick = async () => {
+    const f = $("file").files[0];
+    if (!f) return;
+    $("ctxMsg").textContent = "Reading…";
+    const r = await fetch(`/api/context/upload?name=${encodeURIComponent(f.name)}`,
+      { method: "POST", headers: { "X-Recap-Token": token() }, body: f });
+    if (!r.ok) { $("ctxMsg").textContent = "Couldn't read that file: " + (await r.json()).detail; return; }
+    showContext(await r.json()); $("ctxMsg").textContent = `Added ${f.name}.`;
+  };
+</script>
+</body>
+</html>

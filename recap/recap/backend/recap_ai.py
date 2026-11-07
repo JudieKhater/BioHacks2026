@@ -12,32 +12,13 @@ from __future__ import annotations
 
 import json
 import re
-import urllib.error
-import urllib.request
 from typing import Optional
 
-import config
-
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+import gemini
 
 
-def _gemini(prompt: str, json_mode: bool = False, timeout: float = 20.0) -> Optional[str]:
-    if not config.GEMINI_API_KEY:
-        return None
-    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2}}
-    if json_mode:
-        body["generationConfig"]["responseMimeType"] = "application/json"
-    req = urllib.request.Request(
-        GEMINI_URL.format(model=config.GEMINI_MODEL, key=config.GEMINI_API_KEY),
-        data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except (urllib.error.URLError, KeyError, IndexError, json.JSONDecodeError, TimeoutError) as e:
-        print(f"[gemini] falling back: {e}")
-        return None
+def _gemini(prompt: str, json_mode: bool = False, timeout: float = 30.0) -> Optional[str]:
+    return gemini.generate(prompt, json_mode=json_mode, timeout=timeout)
 
 
 def split_sentences(text: str) -> list[str]:

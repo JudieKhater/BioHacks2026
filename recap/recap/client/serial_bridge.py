@@ -19,7 +19,7 @@ import os
 import time
 import urllib.request
 
-SERVER = os.getenv("RECAP_SERVER", "http://localhost:8000")
+SERVER = os.getenv("RECAP_SERVER", "http://127.0.0.1:8000")
 TOKEN = os.getenv("RECAP_TOKEN", "")
 
 

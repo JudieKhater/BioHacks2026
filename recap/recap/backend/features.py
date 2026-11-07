@@ -161,6 +161,14 @@ def extract(x: np.ndarray, sr: int, asr_words: Optional[Sequence[dict]] = None) 
         wpm = (60.0 * syl / SYLLABLES_PER_WORD / speaking_s) if speaking_s >= 1.0 else None
         wpm_source = "estimate"
 
+    # Percent pause (Green et al. 2013, respiratory subsystem): silence between
+    # the first and last speech segment, as a share of that stretch.
+    pause_pct = None
+    if len(segs) >= 2:
+        span = segs[-1].end - segs[0].start
+        if span > 0:
+            pause_pct = 100.0 * (1.0 - speaking_s / span)
+
     bg_words = None
     if segs and wpm:
         # words per breath group = rate x mean speaking time per group
@@ -174,5 +182,6 @@ def extract(x: np.ndarray, sr: int, asr_words: Optional[Sequence[dict]] = None) 
         "wpm_source": wpm_source,
         "breath_groups": len(segs),
         "breath_group_words": None if bg_words is None else round(bg_words, 2),
+        "pause_pct": None if pause_pct is None else round(pause_pct, 1),
         "confidence": confidence_from_words(words) if words else None,
     }

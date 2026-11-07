@@ -26,12 +26,23 @@
       <p class="muted small">Not a diagnosis. Between-visit trends from a wearable speech monitor, for clinician interpretation.</p>
     </section>
 
+    <section class="card" style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+        <h2 style="margin:0">Speaking-rate trend vs published ALS decline</h2>
+        <span class="muted small">Onset: <select id="onset"><option value="bulbar">bulbar</option><option value="spinal">spinal</option></select></span>
+      </div>
+      <p id="proj" class="muted">Loading…</p>
+      <p class="muted small">Reference: Eshghi et al. 2022, <i>Sci Rep</i> 12:15713. Mean decline 1.74 wpm/month (spinal onset),
+        4.16 wpm/month (bulbar onset); speaking rate under 120 wpm and intelligibility under 85% mark functional speech loss.
+        Morning averages are used to limit the effect of daily fatigue.</p>
+    </section>
+
     <div class="grid" style="margin-top:16px">
       <section class="card">
         <h2>Speech rate (wpm)</h2>
         <canvas id="wpm"></canvas>
         <div class="legend"><span><i style="background:var(--chart-1)"></i>Morning</span>
-          <span><i style="background:var(--chart-2)"></i>Afternoon</span><span><i style="background:var(--warn)"></i>125 support line</span></div>
+          <span><i style="background:var(--chart-2)"></i>Afternoon</span><span><i style="background:var(--warn)"></i>120 wpm speech-loss marker</span></div>
       </section>
       <section class="card">
         <h2>Words per breath</h2>
@@ -68,7 +79,7 @@
     lineChart(document.getElementById("wpm"), [
       { color: c1, points: days.map(d => [x(d), d.morning_wpm]) },
       { color: c2, points: days.map(d => [x(d), d.afternoon_wpm]) }],
-      { refLines: [{ y: 125, label: "125" }], xLabels: labels });
+      { refLines: [{ y: 120, label: "120" }], xLabels: labels });
     lineChart(document.getElementById("bg"), [
       { color: c1, points: days.map(d => [x(d), d.morning_breath_group_words]) },
       { color: c2, points: days.map(d => [x(d), d.afternoon_breath_group_words]) }],
@@ -82,7 +93,25 @@
     document.getElementById("summary").textContent = s.text;
     document.getElementById("summary").classList.remove("muted");
     document.getElementById("sumSrc").textContent = s.source === "gemini" ? "Written by Gemini from the numbers above" : "";
+    loadProjection();
   }
+
+  async function loadProjection() {
+    const p = await api(`/api/clinic/projection?days=120&onset=${document.getElementById("onset").value}`);
+    const el = document.getElementById("proj");
+    if (p.paused) { el.textContent = "Sharing paused."; return; }
+    if (!p.ok) { el.textContent = p.reason; return; }
+    const slope = p.slope_wpm_per_month;
+    const dir = slope < 0 ? `falling ${Math.abs(slope).toFixed(1)} wpm per month` : `steady or rising (${slope.toFixed(1)} wpm per month)`;
+    let when = "";
+    if (p.months_to_120 === 0) when = " Morning rate is already under 120 wpm.";
+    else if (p.months_to_120 != null) when = ` At this slope, mornings would reach 120 wpm in about ${p.months_to_120} months.`;
+    el.classList.remove("muted");
+    el.innerHTML = `Morning speaking rate is about <b>${p.current_morning_wpm} wpm</b> and ${dir} over ${p.days} days: ` +
+      `<b>${escapeHtml(p.comparison)}</b> (published ${document.getElementById("onset").value}-onset mean: ${p.published_for_onset} wpm/month).${when}` +
+      `<br><span class="muted small">${escapeHtml(p.note)}</span>`;
+  }
+  document.getElementById("onset").onchange = loadProjection;
   load();
 </script>
 </body>

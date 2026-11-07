@@ -3,6 +3,8 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 numpy>=1.26
 python-dotenv>=1.0
+# Reading lesson PDFs (context/ folder, Notes page upload)
+pypdf>=4.0
 # Tiger Data / TimescaleDB (only needed when DATABASE_URL is set)
 psycopg[binary]>=3.2
 
