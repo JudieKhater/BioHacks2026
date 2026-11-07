@@ -84,8 +84,12 @@ function lineChart(canvas, series, opts = {}) {
   });
 }
 
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 function nav(active) {
-  const links = [["/", "Home"], ["/alex.html", "Alex"], ["/captions.html", "Captions"],
+  const links = [["/", "Home"], ["/alex.html", "Alex"], ["/captions.html", "Captions"], ["/notes.html", "Notes"],
                  ["/trainer.html", "Breathing"], ["/recap.html", "Recap"], ["/clinic.html", "Clinic"]];
   return links.map(([h, t]) => `<a href="${h}"${t === active ? ' aria-current="page"' : ""}>${t}</a>`).join("");
 }

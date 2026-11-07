@@ -2,18 +2,21 @@
 Recap audio client: runs on the laptop the lapel mic is plugged into.
 
   mic --> every 5 s: features over the last 10 s --> POST /api/features
-      --> ElevenLabs Scribe v2 Realtime (WebSocket) --> POST /api/captions
-                                       word timestamps --> real speech rate
+      --> speech to text --> POST /api/captions
+            ElevenLabs Scribe v2 Realtime (word by word, word timestamps), or
+            Gemini (one phrase at a time, cut at his pauses; ~1-2 s per phrase)
 
 Usage (from the repo root):
-    python client/audio_client.py                  # captions + features
+    python client/audio_client.py                  # captions + features (best available speech-to-text)
+    python client/audio_client.py --captions on    # also switch captions on now (else Auto decides)
+    python client/audio_client.py --stt gemini     # force Gemini speech-to-text
     python client/audio_client.py --no-asr         # features only, estimated wpm
     python client/audio_client.py --list-devices   # find your lapel mic
     python client/audio_client.py --device 2
 
-Needs: ELEVENLABS_API_KEY in .env (unless --no-asr), the backend running.
-Audio never leaves this laptop except to Scribe for live captions; nothing is
-recorded to disk.
+Needs: ELEVENLABS_API_KEY or GEMINI_API_KEY in .env (unless --no-asr), the backend running.
+Audio never leaves this laptop except to the speech-to-text service for live
+captions; nothing is recorded to disk.
 """
 from __future__ import annotations
 
@@ -34,6 +37,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 import features  # noqa: E402
+import gemini  # noqa: E402  (also loads .env via config)
 
 try:
     from dotenv import load_dotenv
@@ -46,7 +50,7 @@ BLOCK_S = 0.1          # 100 ms audio chunks (Scribe likes small, steady chunks)
 WINDOW_S = 10.0        # features computed over the last 10 s
 HOP_S = 5.0            # ...every 5 s
 
-SERVER = os.getenv("RECAP_SERVER", "http://localhost:8000")
+SERVER = os.getenv("RECAP_SERVER", "http://127.0.0.1:8000")
 TOKEN = os.getenv("RECAP_TOKEN", "")
 SCRIBE_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
 
@@ -168,11 +172,92 @@ async def scribe_loop(rec: Recorder, audio_q: asyncio.Queue, api_key: str, keyte
             await asyncio.sleep(2)
 
 
+class PhraseCutter:
+    """
+    Splits the mic stream into phrases at his pauses, for phrase-at-a-time
+    speech-to-text. Energy-based: a 100 ms block is speech if it is 10 dB above
+    the recent noise floor. A phrase ends after `pause_s` of quiet or `max_s`.
+    """
+
+    def __init__(self, pause_s: float = 0.9, max_s: float = 12.0, min_speech_s: float = 0.4):
+        self.pause_blocks = max(1, int(round(pause_s / BLOCK_S)))
+        self.max_blocks = int(max_s / BLOCK_S)
+        self.min_speech_blocks = int(min_speech_s / BLOCK_S)
+        self.levels: deque[float] = deque(maxlen=int(6 / BLOCK_S))   # last 6 s of block loudness
+        self.preroll: deque[np.ndarray] = deque(maxlen=3)            # keep 300 ms before speech starts
+        self.blocks: list[np.ndarray] = []
+        self.speech_blocks = 0
+        self.quiet_run = 0
+        self.t_start = 0.0
+        self.level_db = -90.0
+
+    def add(self, block: np.ndarray):
+        """Feed one int16 block. Returns (pcm bytes, t_start, t_end, speech seconds) when a phrase ends."""
+        rms = float(np.sqrt(np.mean(block.astype(np.float32) ** 2))) / 32768.0
+        db = 20 * np.log10(rms + 1e-9)
+        self.level_db = db
+        self.levels.append(db)
+        floor = float(np.percentile(self.levels, 10)) if len(self.levels) >= 10 else -60.0
+        speech = db > max(floor + 10.0, -55.0)
+
+        if not self.blocks:
+            if speech:
+                self.blocks = list(self.preroll) + [block]
+                self.t_start = time.time() - BLOCK_S * len(self.blocks)
+                self.speech_blocks, self.quiet_run = 1, 0
+            else:
+                self.preroll.append(block)
+            return None
+
+        self.blocks.append(block)
+        if speech:
+            self.speech_blocks += 1
+            self.quiet_run = 0
+        else:
+            self.quiet_run += 1
+        if self.quiet_run >= self.pause_blocks or len(self.blocks) >= self.max_blocks:
+            blocks, n_speech = self.blocks, self.speech_blocks
+            self.blocks, self.speech_blocks, self.quiet_run = [], 0, 0
+            self.preroll.clear()
+            if n_speech < self.min_speech_blocks:
+                return None  # a cough or a click
+            pcm = np.concatenate(blocks).astype(np.int16).tobytes()
+            return pcm, self.t_start, time.time(), n_speech * BLOCK_S
+        return None
+
+
+async def gemini_stt_loop(rec: Recorder, phrase_q: asyncio.Queue, keyterms: list[str]):
+    """Transcribe each phrase with Gemini and post it as a finished caption line."""
+    while True:
+        pcm, t0, t1, speech_s = await phrase_q.get()
+        if phrase_q.qsize() > 3:
+            print("[gemini stt] falling behind; skipping a phrase")
+            continue
+        text = await asyncio.to_thread(gemini.transcribe, pcm, SR, keyterms)
+        if text is None:
+            print("[gemini stt] no transcript (rate-limited or offline); phrase skipped")
+            continue
+        if not text:
+            continue
+        # spread the words evenly over the phrase so the feature loop gets a speech rate
+        words = text.split()
+        for i, w in enumerate(words):
+            rec.words.append({"text": w, "type": "word", "abs_start": t0 + (t1 - t0) * (i + 0.5) / len(words)})
+        print(f"[{time.strftime('%H:%M:%S')}] \"{text}\"")
+        await asyncio.to_thread(post, "/api/captions", {"text": text, "final": True})
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", type=int, default=None, help="input device index (see --list-devices)")
     ap.add_argument("--list-devices", action="store_true")
-    ap.add_argument("--no-asr", action="store_true", help="skip Scribe; features only")
+    ap.add_argument("--no-asr", action="store_true", help="no speech-to-text; features only")
+    ap.add_argument("--stt", choices=["auto", "elevenlabs", "gemini"], default="auto",
+                    help="speech-to-text: auto = ElevenLabs if its key is set, else Gemini")
+    ap.add_argument("--captions", choices=["on", "auto", "off"], default=None,
+                    help="set the caption mode when starting (default: leave Alex's setting)")
+    ap.add_argument("--pause", type=float, default=0.9,
+                    help="Gemini mode: seconds of quiet that end a phrase (default 0.9)")
     args = ap.parse_args()
 
     import sounddevice as sd  # pip install sounddevice
@@ -180,35 +265,60 @@ async def main():
         print(sd.query_devices())
         return
 
-    api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
-    use_asr = not args.no_asr and bool(api_key)
-    if not args.no_asr and not api_key:
-        print("No ELEVENLABS_API_KEY set: running features only (estimated wpm, no captions).")
+    el_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    stt = None
+    if not args.no_asr:
+        if args.stt in ("auto", "elevenlabs") and el_key:
+            stt = "elevenlabs"
+        elif args.stt in ("auto", "gemini") and gemini.enabled():
+            stt = "gemini"
+        else:
+            print("No ELEVENLABS_API_KEY or GEMINI_API_KEY for the chosen --stt: "
+                  "running features only (estimated wpm, no captions).")
+    use_asr = stt is not None
+
+    if get("/api/health") is None:
+        print(f"Can't reach the Recap server at {SERVER}. Start it first:\n"
+              f"  .venv\\Scripts\\python.exe -m uvicorn backend.app:app --host 0.0.0.0 --port 8000")
+        return
+    if args.captions:
+        post("/api/mode", {"mode": args.captions})
 
     loop = asyncio.get_running_loop()
     rec = Recorder()
     audio_q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    phrase_q: asyncio.Queue = asyncio.Queue()
+    cutter = PhraseCutter(pause_s=args.pause)
 
     def on_audio(indata, frames, t, status):
         if status:
             print(f"[mic] {status}")
         block = indata[:, 0].copy()
         rec.add_audio(block)
-        if use_asr:
+        if stt == "elevenlabs":
             def put():
                 if not audio_q.full():
                     audio_q.put_nowait(block.tobytes())
             loop.call_soon_threadsafe(put)
+        elif stt == "gemini":
+            phrase = cutter.add(block)
+            if phrase:
+                loop.call_soon_threadsafe(phrase_q.put_nowait, phrase)
 
     cfg = get("/api/config") or {}
     keyterms = cfg.get("keyterms", [])
 
     with sd.InputStream(samplerate=SR, channels=1, dtype="int16", blocksize=int(SR * BLOCK_S),
                         device=args.device, callback=on_audio):
-        print(f"Listening… sending to {SERVER}. Ctrl+C to stop.")
+        dev = sd.query_devices(args.device if args.device is not None else sd.default.device[0])
+        print(f"Listening on '{dev['name']}', speech-to-text: {stt or 'off'}, sending to {SERVER}. Ctrl+C to stop.")
+        if stt == "gemini":
+            print("Captions appear after each pause (about 1-2 s).")
         tasks = [feature_loop(rec, use_asr)]
-        if use_asr:
-            tasks.append(scribe_loop(rec, audio_q, api_key, keyterms))
+        if stt == "elevenlabs":
+            tasks.append(scribe_loop(rec, audio_q, el_key, keyterms))
+        elif stt == "gemini":
+            tasks.append(gemini_stt_loop(rec, phrase_q, keyterms))
         await asyncio.gather(*tasks)
 
 

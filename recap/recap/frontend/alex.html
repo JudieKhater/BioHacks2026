@@ -42,6 +42,22 @@
         <button data-mode="on">On</button>
       </div>
     </section>
+
+    <section class="card">
+      <h2>Predicted words</h2>
+      <p class="muted small">When you stall or tire mid-sentence, captions can suggest how it ends, in italics after an arrow.
+        Never spoken aloud, never added to your recap.</p>
+      <div class="seg" style="grid-template-columns:1fr 1fr" role="group" aria-label="Predicted words">
+        <button data-predict="false">Off</button>
+        <button data-predict="true">On</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Right now</h2>
+      <div id="tip1"><p class="muted small">Tips appear once you start talking.</p></div>
+      <p class="small"><a href="/notes.html">Live notes and speech check →</a></p>
+    </section>
   </div>
 
   <section class="card" style="margin-top:16px">
@@ -87,11 +103,21 @@
     pill.textContent = s.captions_on ? "Captions on" : "Captions off";
     pill.className = "pill" + (s.captions_on ? " on" : "");
     modeBtns.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === s.mode)));
+    predBtns.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.predict === String(!!s.predict))));
     const mins = Math.round((s.speaking_s_today || 0) / 60);
     document.getElementById("sub").textContent = `Speech battery · ${mins} min of talking today`;
   }
 
   modeBtns.forEach(b => b.onclick = async () => showState(await api("/api/mode", { mode: b.dataset.mode })));
+  const predBtns = [...document.querySelectorAll("[data-predict]")];
+  predBtns.forEach(b => b.onclick = async () => showState(await api("/api/predict", { on: b.dataset.predict === "true" })));
+
+  liveSocket("/ws/notes", m => {
+    if (m.type !== "symptoms" || !m.guidance.length) return;
+    const t = m.guidance[0];
+    document.getElementById("tip1").innerHTML =
+      `<p class="big" style="font-size:1.05rem">${escapeHtml(t.title)}</p><p class="small">${escapeHtml(t.text)}</p>`;
+  });
 
   document.getElementById("cal").onclick = async () => {
     const r = await api("/api/calibrate", {});
