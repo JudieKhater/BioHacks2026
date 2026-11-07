@@ -142,8 +142,8 @@ def clean(text: str) -> tuple[str, Disfluency]:
                 a = [_norm(x[1]) for x in out[j:j + n]]
                 b = [_norm(x[1]) for x in out[j + n:j + 2 * n]]
                 if a == b and all(a):
-                    if out[j + 2 * n - 1][2] and not out[j + n - 1][2]:
-                        out[j + n - 1][2] = out[j + 2 * n - 1][2]
+                    # keep the second attempt's punctuation: "the, the inferior" -> "the inferior"
+                    out[j + n - 1][2] = out[j + 2 * n - 1][2]
                     del out[j + n:j + 2 * n]
                     d.repetitions += 1
                     changed = True

@@ -45,6 +45,12 @@ def test_clean_keeps_punctuation():
     assert text == "caused by aneurysms, tumours or herniation."
 
 
+def test_clean_elevenlabs_style_stutters():
+    text, d = S.clean("So the oculo-- the oculomotor nerve controls the medial rectus and the, the inferior oblique muscle.")
+    assert text == "So the oculomotor nerve controls the medial rectus and the inferior oblique muscle."
+    assert d.part_words == 1 and d.repetitions == 2
+
+
 def test_clean_never_adds_words():
     raw = "Mitochondria make ATP for the cell."
     text, d = S.clean(raw)
