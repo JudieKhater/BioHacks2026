@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recap Captions</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  /* Projector view: high contrast, huge type, readable from the back row. */
+  body { background: #0f1312; color: #f4f1e8; height: 100vh; overflow: hidden; }
+  #stage { position: fixed; inset: auto 0 0 0; padding: 0 4vw 5vh; transition: opacity .8s ease; opacity: 0; }
+  #stage.visible { opacity: 1; }
+  .line { font-size: clamp(28px, 4.6vw, 64px); font-weight: 700; line-height: 1.2; margin: .25em 0; }
+  .line.old { color: #9aa49f; font-size: clamp(22px, 3.2vw, 44px); font-weight: 400; }
+  .line.partial { color: #cfe8df; }
+  #corner { position: fixed; top: 12px; right: 16px; font-size: 14px; color: #6f7a76; }
+</style>
+</head>
+<body>
+<div id="corner"><span class="status-dot" id="dot"></span><span id="mode">connecting…</span></div>
+<div id="stage" aria-live="polite"></div>
+<script src="/common.js"></script>
+<script>
+  // Shows Alex's words as he says them, only while captions are on.
+  // Nothing on this page is saved.
+  const stage = document.getElementById("stage");
+  const finals = [];
+  let partial = "";
+
+  function render() {
+    const recent = finals.slice(-2);
+    stage.innerHTML = recent.map(t => `<div class="line old">${escapeHtml(t)}</div>`).join("") +
+      (partial ? `<div class="line partial">${escapeHtml(partial)}</div>` : "");
+  }
+  function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+  liveSocket("/ws/captions", msg => {
+    if (msg.type === "visibility") {
+      stage.classList.toggle("visible", msg.captions_on);
+      document.getElementById("mode").textContent = msg.captions_on ? "captions on" : "standing by";
+      if (!msg.captions_on) { finals.length = 0; partial = ""; render(); }
+    } else if (msg.type === "caption") {
+      if (msg.final) { finals.push(msg.text); partial = ""; } else { partial = msg.text; }
+      render();
+    }
+  }, live => document.getElementById("dot").classList.toggle("live", live));
+</script>
+</body>
+</html>

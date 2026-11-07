@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>End-of-Day Recap</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .sent { display: flex; gap: 12px; align-items: flex-start; padding: 12px 4px; border-bottom: 1px solid var(--line); }
+  .sent input { width: 26px; height: 26px; flex: none; margin-top: 2px; accent-color: var(--accent); }
+  .sent label { cursor: pointer; }
+  .published li { margin: 8px 0; font-size: 1.1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><h1>End-of-day recap</h1><nav id="nav"></nav></header>
+
+  <p class="note small">Built only from what you said in class today, word for word. Nothing is rewritten.
+    Suggested sentences are ticked; change anything, then publish for your students.</p>
+
+  <section class="card" style="margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <h2 style="margin:0">Today's sentences</h2>
+      <span class="muted small" id="src"></span>
+    </div>
+    <div id="list"><p class="muted">Loading…</p></div>
+    <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+      <button class="primary" id="publish">Publish recap</button>
+      <button id="refresh">Suggest again</button>
+    </div>
+    <p class="small" id="msg"></p>
+  </section>
+
+  <section class="card" style="margin-top:16px">
+    <h2>What students see</h2>
+    <ul class="published" id="published"><li class="muted">Nothing published yet.</li></ul>
+  </section>
+</div>
+<script src="/common.js"></script>
+<script>
+  document.getElementById("nav").innerHTML = nav("Recap");
+  const esc = s => s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+  async function loadDraft() {
+    document.getElementById("list").innerHTML = '<p class="muted">Picking key sentences…</p>';
+    const d = await api("/api/recap/draft");
+    const all = d.all || d.sentences || [];
+    const keep = new Set(d.sentences || []);
+    document.getElementById("src").textContent =
+      d.source === "gemini" ? "Suggested by Gemini (choice only, never rewording)" :
+      d.source === "offline" ? "Suggested offline" : "";
+    document.getElementById("list").innerHTML = all.length ? all.map((s, i) => `
+      <div class="sent"><input type="checkbox" id="s${i}" ${keep.has(s) ? "checked" : ""}>
+      <label for="s${i}">${esc(s)}</label></div>`).join("")
+      : '<p class="muted">No class transcript yet today. Captions collect your words as you teach.</p>';
+    document.getElementById("list").dataset.all = JSON.stringify(all);
+  }
+
+  async function loadPublished() {
+    const r = await api("/api/recap/latest");
+    document.getElementById("published").innerHTML = r.sentences && r.sentences.length
+      ? r.sentences.map(s => `<li>${esc(s)}</li>`).join("") : '<li class="muted">Nothing published yet.</li>';
+  }
+
+  document.getElementById("publish").onclick = async () => {
+    const all = JSON.parse(document.getElementById("list").dataset.all || "[]");
+    const chosen = all.filter((_, i) => document.getElementById("s" + i)?.checked);
+    if (!chosen.length) { document.getElementById("msg").textContent = "Tick at least one sentence."; return; }
+    await api("/api/recap/approve", { sentences: chosen });
+    document.getElementById("msg").textContent = `Published ${chosen.length} sentences.`;
+    loadPublished();
+  };
+  document.getElementById("refresh").onclick = loadDraft;
+
+  loadDraft(); loadPublished();
+</script>
+</body>
+</html>

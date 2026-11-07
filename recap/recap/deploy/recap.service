@@ -1,0 +1,15 @@
+# systemd unit for the Vultr server. Copy to /etc/systemd/system/recap.service
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now recap
+[Unit]
+Description=Recap backend
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/recap
+EnvironmentFile=/opt/recap/.env
+ExecStart=/opt/recap/.venv/bin/uvicorn backend.app:app --host 127.0.0.1 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recap for Alex</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .battery { display: flex; align-items: center; gap: 22px; }
+  .ring { --pct: 100; width: 150px; height: 150px; border-radius: 50%; flex: none;
+    background: conic-gradient(var(--accent) calc(var(--pct) * 1%), var(--line) 0);
+    display: grid; place-items: center; transition: background .6s; }
+  .ring.low { background: conic-gradient(var(--warn) calc(var(--pct) * 1%), var(--line) 0); }
+  .ring > div { width: 118px; height: 118px; border-radius: 50%; background: var(--surface);
+    display: grid; place-items: center; font-size: 2.1rem; font-weight: 700; }
+  .big { font-size: 1.25rem; font-weight: 700; margin: 0 0 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><h1>Your voice today</h1><nav id="nav"></nav></header>
+
+  <div class="grid">
+    <section class="card">
+      <div class="battery">
+        <div class="ring" id="ring"><div id="pct">–</div></div>
+        <div>
+          <p class="big" id="headline">Connecting…</p>
+          <p class="muted small" id="sub">Speech battery: how much your voice has left today.</p>
+          <p class="small"><span class="pill" id="capPill">Captions off</span></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Captions</h2>
+      <p class="muted small">You decide. Auto lets Recap switch captions on when your voice gets tired.</p>
+      <div class="seg" role="group" aria-label="Caption mode">
+        <button data-mode="off">Off</button>
+        <button data-mode="auto">Auto</button>
+        <button data-mode="on">On</button>
+      </div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:16px">
+    <h2>Today</h2>
+    <canvas id="today"></canvas>
+    <div class="legend"><span><i style="background:var(--chart-1)"></i>Speech rate (wpm)</span>
+      <span><i style="background:var(--warn)"></i>125 wpm support line</span></div>
+    <p class="muted small" id="tip"></p>
+  </section>
+
+  <div class="grid" style="margin-top:16px">
+    <section class="card">
+      <h2>Fresh baseline</h2>
+      <p class="muted small">Do this when your voice feels like itself, ideally first period. Just teach normally for about 30 seconds.</p>
+      <button id="cal">Set baseline now</button>
+      <p class="small" id="calMsg"></p>
+    </section>
+    <section class="card">
+      <h2>Sharing with your clinic</h2>
+      <p class="muted small">Only numbers are shared: speech rate, loudness, breathing. Never audio or what you said.</p>
+      <button id="share" aria-pressed="true">Sharing on</button>
+      <p class="small muted" id="shareMsg"></p>
+    </section>
+  </div>
+</div>
+<script src="/common.js"></script>
+<script>
+  document.getElementById("nav").innerHTML = nav("Alex");
+  const modeBtns = [...document.querySelectorAll("[data-mode]")];
+
+  function showState(s) {
+    const pct = s.battery;
+    const ring = document.getElementById("ring");
+    ring.style.setProperty("--pct", pct);
+    ring.classList.toggle("low", pct < 45);
+    document.getElementById("pct").textContent = pct + "%";
+    let head = "Voice feels fresh";
+    if (s.calibrating) head = "Learning your fresh voice…";
+    else if (pct < 45) head = "Running low: let captions carry the rest";
+    else if (pct < 70) head = "Starting to tire";
+    document.getElementById("headline").textContent = head;
+    const pill = document.getElementById("capPill");
+    pill.textContent = s.captions_on ? "Captions on" : "Captions off";
+    pill.className = "pill" + (s.captions_on ? " on" : "");
+    modeBtns.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === s.mode)));
+    const mins = Math.round((s.speaking_s_today || 0) / 60);
+    document.getElementById("sub").textContent = `Speech battery · ${mins} min of talking today`;
+  }
+
+  modeBtns.forEach(b => b.onclick = async () => showState(await api("/api/mode", { mode: b.dataset.mode })));
+
+  document.getElementById("cal").onclick = async () => {
+    const r = await api("/api/calibrate", {});
+    document.getElementById("calMsg").textContent = r.message;
+  };
+
+  async function loadConsent() {
+    const { events } = await api("/api/consent");
+    const on = events.length ? !!events[0].granted : true;
+    const b = document.getElementById("share");
+    b.setAttribute("aria-pressed", String(on));
+    b.textContent = on ? "Sharing on" : "Sharing paused";
+    if (events.length) document.getElementById("shareMsg").textContent =
+      `Last change ${new Date(events[0].ts * 1000).toLocaleString()} · receipt ${events[0].receipt_hash.slice(0, 10)}…` +
+      (events[0].chain_tx ? " · anchored on Solana devnet" : "");
+  }
+  document.getElementById("share").onclick = async (e) => {
+    const on = e.currentTarget.getAttribute("aria-pressed") === "true";
+    await api("/api/consent", { party: "ALS clinic", granted: !on });
+    loadConsent();
+  };
+
+  async function loadToday() {
+    const { curve } = await api("/api/today");
+    const pts = curve.map(r => [r.ts, r.wpm]);
+    const labels = curve.length ? [[curve[0].ts, fmtT(curve[0].ts)], [curve[curve.length - 1].ts, fmtT(curve[curve.length - 1].ts)]] : [];
+    lineChart(document.getElementById("today"), [{ color: cssVar("--chart-1"), points: pts }],
+      { refLines: [{ y: 125, label: "125" }], xLabels: labels, empty: "Start talking and your day will appear here." });
+    const am = curve.filter(r => new Date(r.ts * 1000).getHours() < 12 && r.wpm).map(r => r.wpm);
+    const pm = curve.filter(r => new Date(r.ts * 1000).getHours() >= 12 && r.wpm).map(r => r.wpm);
+    const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+    document.getElementById("tip").textContent = (am.length && pm.length && avg(am) - avg(pm) > 15)
+      ? "Your voice held up best this morning. Try moving the recap to an earlier period tomorrow."
+      : "";
+  }
+  function fmtT(ts) { return new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+
+  liveSocket("/ws/state", showState);
+  loadConsent(); loadToday(); setInterval(loadToday, 15000);
+</script>
+</body>
+</html>

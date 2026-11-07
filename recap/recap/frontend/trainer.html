@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Breathing Trainer</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .meter { position: relative; height: 64px; border-radius: 12px; background: var(--line); overflow: hidden; }
+  .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); transition: width .08s linear; }
+  .target { position: absolute; top: 0; bottom: 0; width: 3px; background: var(--warn); }
+  .count { font-size: 3rem; font-weight: 700; margin: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><h1>Morning breathing trainer</h1><nav id="nav"></nav></header>
+
+  <p class="note small">Expiratory muscle strength training (EMST): breathe out hard against a set resistance.
+    Your respiratory therapist or speech-language pathologist sets the target and decides whether this is right for you.
+    Mornings are best: that's when you're strongest. Stop if you feel dizzy or tired.</p>
+
+  <section class="card" style="margin-top:16px">
+    <div class="meter" aria-label="Breath pressure"><div class="fill" id="fill"></div><div class="target" id="target"></div></div>
+    <p class="muted small" style="margin-top:8px">Pressure <b id="now">0</b> cm H₂O · target <b id="tgtTxt">40</b> · peak this session <b id="peak">0</b></p>
+  </section>
+
+  <div class="grid" style="margin-top:16px">
+    <section class="card">
+      <h2>Reps</h2>
+      <p class="count"><span id="reps">0</span> <span class="muted" style="font-size:1.2rem">/ 25</span></p>
+      <p class="muted small">5 sets of 5. Rest between sets. A rep counts when you reach the target line.</p>
+      <p class="small" id="setMsg"></p>
+    </section>
+    <section class="card">
+      <h2>Session</h2>
+      <p class="small">Target set by your therapist:
+        <input type="number" id="tgt" value="40" min="5" max="150"> cm H₂O</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="primary" id="save">Save session</button>
+        <button id="reset">Reset</button>
+      </div>
+      <p class="small" id="saveMsg"></p>
+    </section>
+  </div>
+</div>
+<script src="/common.js"></script>
+<script>
+  document.getElementById("nav").innerHTML = nav("Breathing");
+  const MAX = 150; // meter full-scale, cm H2O
+  let target = 40, reps = 0, peak = 0, inRep = false;
+
+  function setTarget(v) {
+    target = Math.max(5, Math.min(MAX, Number(v) || 40));
+    document.getElementById("tgtTxt").textContent = target;
+    document.getElementById("target").style.left = (target / MAX * 100) + "%";
+  }
+  document.getElementById("tgt").oninput = e => setTarget(e.target.value);
+  setTarget(40);
+
+  function onPressure(p) {
+    document.getElementById("now").textContent = p.toFixed(0);
+    document.getElementById("fill").style.width = Math.min(100, p / MAX * 100) + "%";
+    peak = Math.max(peak, p);
+    document.getElementById("peak").textContent = peak.toFixed(0);
+    // A rep: pressure crosses the target, then falls back below half of it.
+    if (!inRep && p >= target) inRep = true;
+    if (inRep && p < target * 0.5) {
+      inRep = false; reps++;
+      document.getElementById("reps").textContent = reps;
+      document.getElementById("setMsg").textContent =
+        reps % 5 === 0 ? (reps >= 25 ? "Done for today. Nice work." : "Set complete. Rest for a minute.") : "";
+    }
+  }
+
+  liveSocket("/ws/trainer", m => { if (m.type === "pressure") onPressure(m.cmh2o); });
+
+  document.getElementById("save").onclick = async () => {
+    await api("/api/emst/session", { reps, peak_cmh2o: peak, target_cmh2o: target });
+    document.getElementById("saveMsg").textContent = `Saved ${reps} reps. Your clinic will see this in your trends.`;
+  };
+  document.getElementById("reset").onclick = () => {
+    reps = 0; peak = 0; inRep = false;
+    document.getElementById("reps").textContent = 0; document.getElementById("peak").textContent = 0;
+    document.getElementById("setMsg").textContent = ""; document.getElementById("saveMsg").textContent = "";
+  };
+</script>
+</body>
+</html>

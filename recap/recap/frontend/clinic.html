@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recap Clinic View</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><h1>Clinic view · Alex C.</h1><nav id="nav"></nav></header>
+
+  <section class="card" id="pausedCard" hidden>
+    <h2>Sharing paused</h2>
+    <p class="muted">Alex has paused sharing with the clinic. Data will appear again if he turns sharing back on.</p>
+  </section>
+
+  <div id="content">
+    <section class="card">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+        <h2 style="margin:0">Summary for review</h2>
+        <span class="muted small" id="sumSrc"></span>
+      </div>
+      <p id="summary" class="muted">Loading…</p>
+      <p class="muted small">Not a diagnosis. Between-visit trends from a wearable speech monitor, for clinician interpretation.</p>
+    </section>
+
+    <div class="grid" style="margin-top:16px">
+      <section class="card">
+        <h2>Speech rate (wpm)</h2>
+        <canvas id="wpm"></canvas>
+        <div class="legend"><span><i style="background:var(--chart-1)"></i>Morning</span>
+          <span><i style="background:var(--chart-2)"></i>Afternoon</span><span><i style="background:var(--warn)"></i>125 support line</span></div>
+      </section>
+      <section class="card">
+        <h2>Words per breath</h2>
+        <canvas id="bg"></canvas>
+        <div class="legend"><span><i style="background:var(--chart-1)"></i>Morning</span>
+          <span><i style="background:var(--chart-2)"></i>Afternoon</span></div>
+        <p class="muted small">Indirect breathing measure: fewer words between pauses for breath.</p>
+      </section>
+      <section class="card">
+        <h2>Afternoon fatigue score</h2>
+        <canvas id="score"></canvas>
+      </section>
+      <section class="card">
+        <h2>Breathing trainer reps</h2>
+        <canvas id="emst"></canvas>
+        <p class="muted small">Goal 25 per day if prescribed.</p>
+      </section>
+    </div>
+  </div>
+</div>
+<script src="/common.js"></script>
+<script>
+  document.getElementById("nav").innerHTML = nav("Clinic");
+
+  async function load() {
+    const t = await api("/api/trends?days=21");
+    document.getElementById("pausedCard").hidden = !t.paused;
+    document.getElementById("content").hidden = !!t.paused;
+    if (t.paused) return;
+    const days = t.days;
+    const x = d => new Date(d.day + "T12:00").getTime() / 1000;
+    const labels = days.length ? [[x(days[0]), days[0].day.slice(5)], [x(days[days.length - 1]), days[days.length - 1].day.slice(5)]] : [];
+    const c1 = cssVar("--chart-1"), c2 = cssVar("--chart-2");
+    lineChart(document.getElementById("wpm"), [
+      { color: c1, points: days.map(d => [x(d), d.morning_wpm]) },
+      { color: c2, points: days.map(d => [x(d), d.afternoon_wpm]) }],
+      { refLines: [{ y: 125, label: "125" }], xLabels: labels });
+    lineChart(document.getElementById("bg"), [
+      { color: c1, points: days.map(d => [x(d), d.morning_breath_group_words]) },
+      { color: c2, points: days.map(d => [x(d), d.afternoon_breath_group_words]) }],
+      { xLabels: labels, decimals: 1 });
+    lineChart(document.getElementById("score"), [
+      { color: c2, points: days.map(d => [x(d), d.afternoon_score]) }], { xLabels: labels, yMin: 0, yMax: 100 });
+    lineChart(document.getElementById("emst"), [
+      { color: c1, points: days.map(d => [x(d), d.emst_reps]) }], { xLabels: labels, yMin: 0 });
+
+    const s = await api("/api/clinic/summary?days=21");
+    document.getElementById("summary").textContent = s.text;
+    document.getElementById("summary").classList.remove("muted");
+    document.getElementById("sumSrc").textContent = s.source === "gemini" ? "Written by Gemini from the numbers above" : "";
+  }
+  load();
+</script>
+</body>
+</html>

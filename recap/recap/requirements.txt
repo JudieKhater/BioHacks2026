@@ -1,0 +1,17 @@
+# Backend
+fastapi>=0.115
+uvicorn[standard]>=0.30
+numpy>=1.26
+python-dotenv>=1.0
+# Tiger Data / TimescaleDB (only needed when DATABASE_URL is set)
+psycopg[binary]>=3.2
+
+# Laptop audio client
+sounddevice>=0.4.7
+websockets>=12
+
+# ESP32 serial bridge
+pyserial>=3.5
+
+# Tests
+pytest>=8

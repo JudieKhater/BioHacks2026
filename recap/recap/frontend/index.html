@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recap</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .hero { padding: 24px 0 8px; }
+  .hero h1 { font-size: clamp(2rem, 6vw, 3.2rem); margin: 0 0 8px; letter-spacing: -0.02em; }
+  .hero p { font-size: 1.15rem; max-width: 640px; }
+  .tile { text-decoration: none; color: inherit; display: block; }
+  .tile:hover { border-color: var(--accent); }
+  blockquote { margin: 18px 0; padding-left: 14px; border-left: 4px solid var(--accent); font-size: 1.1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><strong>Recap</strong><nav id="nav"></nav></header>
+  <section class="hero">
+    <h1>A voice that lasts until 3:30.</h1>
+    <p>Recap is a teacher's lanyard that notices when Alex's voice is tiring and quietly brings up captions of his own words,
+      so he keeps teaching in his own voice. It never speaks for him.</p>
+    <blockquote>"I want to be in a classroom in June." — Alex</blockquote>
+    <p class="small muted"><span class="status-dot" id="dot"></span><span id="status">checking server…</span></p>
+  </section>
+  <div class="grid">
+    <a class="card tile" href="/alex.html"><h2>Alex's view</h2><p class="muted small">Speech battery, caption control, baseline, sharing.</p></a>
+    <a class="card tile" href="/captions.html"><h2>Classroom captions</h2><p class="muted small">Open on the projector. Appears only when needed.</p></a>
+    <a class="card tile" href="/trainer.html"><h2>Breathing trainer</h2><p class="muted small">Morning EMST reps, if prescribed.</p></a>
+    <a class="card tile" href="/recap.html"><h2>End-of-day recap</h2><p class="muted small">His own words from today, chosen by him.</p></a>
+    <a class="card tile" href="/clinic.html"><h2>Clinic view</h2><p class="muted small">Between-visit trends, only while Alex shares.</p></a>
+  </div>
+</div>
+<script src="/common.js"></script>
+<script>
+  document.getElementById("nav").innerHTML = nav("Home");
+  api("/api/health").then(h => {
+    document.getElementById("dot").classList.add("live");
+    document.getElementById("status").textContent =
+      `server live · database: ${h.store === "timescale" ? "Tiger Data" : "local SQLite"} · Gemini: ${h.gemini ? "on" : "offline fallback"}`;
+  }).catch(() => document.getElementById("status").textContent = "server not reachable");
+</script>
+</body>
+</html>

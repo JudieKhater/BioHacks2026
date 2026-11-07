@@ -1,0 +1,6 @@
+# Caddy gives you HTTPS automatically once your domain's DNS points at the server.
+# Replace the domain below with yours, copy to /etc/caddy/Caddyfile, then: sudo systemctl reload caddy
+# WebSockets (/ws/...) are proxied automatically.
+yourdomain.co {
+    reverse_proxy 127.0.0.1:8000
+}
