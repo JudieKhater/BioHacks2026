@@ -7,8 +7,9 @@ Two interchangeable backends with the same methods:
   - SQLiteStore:   zero-setup local file, so the app runs on any laptop.
 
 Privacy: no audio and no live caption text is ever stored. Only numbers
-(features), breathing-trainer results, consent events, and recap text that
-Alex has explicitly approved for his students.
+(features), breathing-trainer results, consent events, session reports
+(numbers and generated guidance), and recap text that Alex has explicitly
+approved for his students.
 """
 from __future__ import annotations
 
@@ -90,6 +91,9 @@ class SQLiteStore:
                 ts REAL NOT NULL, day TEXT NOT NULL, sentences TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS consent_events (
                 ts REAL NOT NULL, party TEXT, granted INTEGER, receipt_hash TEXT, chain_tx TEXT);
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY, started REAL NOT NULL, ended REAL NOT NULL, report TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started);
             """)
             self.conn.commit()
 
@@ -126,6 +130,20 @@ class SQLiteStore:
         rows = [dict(r) for r in self._exec("SELECT * FROM speech_features WHERE ts >= ?", (since,)).fetchall()]
         emst = [dict(r) for r in self._exec("SELECT * FROM emst_sessions WHERE ts >= ?", (since,)).fetchall()]
         return summarize_rows(rows, emst)
+
+    # Session reports: numbers and generated guidance only, never transcript text.
+    def insert_session(self, report: dict) -> None:
+        self._exec("INSERT OR REPLACE INTO sessions VALUES (?,?,?,?)",
+                   (report["id"], report["started"], report["ended"], json.dumps(report)))
+
+    def list_sessions(self, limit: int = 30) -> list[dict]:
+        """Full reports, newest first."""
+        rows = self._exec("SELECT report FROM sessions ORDER BY started DESC LIMIT ?", (limit,)).fetchall()
+        return [json.loads(r["report"]) for r in rows]
+
+    def get_session(self, sid: str) -> Optional[dict]:
+        r = self._exec("SELECT report FROM sessions WHERE id = ?", (sid,)).fetchone()
+        return json.loads(r["report"]) if r else None
 
     def today_curve(self) -> list[dict]:
         start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
@@ -202,6 +220,22 @@ class PostgresStore:
             FROM emst_sessions WHERE time >= now() - make_interval(days => %s)""", (days,)).fetchall()
         norm = lambda rs: [{k: (float(v) if v is not None and k != "reps" else v) for k, v in r.items()} for r in rs]
         return summarize_rows(norm(rows), norm(emst))
+
+    def insert_session(self, report: dict) -> None:
+        self._exec("INSERT INTO sessions (id, started, ended, report) "
+                   "VALUES (%s, to_timestamp(%s), to_timestamp(%s), %s) "
+                   "ON CONFLICT (id) DO UPDATE SET report = EXCLUDED.report, ended = EXCLUDED.ended",
+                   (report["id"], report["started"], report["ended"], json.dumps(report)))
+
+    def list_sessions(self, limit: int = 30) -> list[dict]:
+        rows = self._exec("SELECT report FROM sessions ORDER BY started DESC LIMIT %s", (limit,)).fetchall()
+        return [r["report"] if isinstance(r["report"], dict) else json.loads(r["report"]) for r in rows]
+
+    def get_session(self, sid: str) -> Optional[dict]:
+        r = self._exec("SELECT report FROM sessions WHERE id = %s", (sid,)).fetchone()
+        if not r:
+            return None
+        return r["report"] if isinstance(r["report"], dict) else json.loads(r["report"])
 
     def today_curve(self):
         rows = self._exec("""

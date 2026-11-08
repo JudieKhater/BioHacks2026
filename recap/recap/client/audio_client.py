@@ -6,8 +6,12 @@ Recap audio client: runs on the laptop the lapel mic is plugged into.
             ElevenLabs Scribe v2 Realtime (word by word, word timestamps), or
             Gemini (one phrase at a time, cut at his pauses; ~1-2 s per phrase)
 
+The mic stays OFF until "Start session" is pressed on the Alex or Notes page,
+and turns off again at "End session" (which builds the session report).
+
 Usage (from the repo root):
-    python client/audio_client.py                  # captions + features (best available speech-to-text)
+    python client/audio_client.py                  # wait for Start session, then captions + features
+    python client/audio_client.py --now            # start a session immediately
     python client/audio_client.py --captions on    # also switch captions on now (else Auto decides)
     python client/audio_client.py --stt gemini     # force Gemini speech-to-text
     python client/audio_client.py --no-asr         # features only, estimated wpm
@@ -258,6 +262,8 @@ async def main():
                     help="set the caption mode when starting (default: leave Alex's setting)")
     ap.add_argument("--pause", type=float, default=0.9,
                     help="Gemini mode: seconds of quiet that end a phrase (default 0.9)")
+    ap.add_argument("--now", action="store_true",
+                    help="start a session right away instead of waiting for the Start session button")
     args = ap.parse_args()
 
     import sounddevice as sd  # pip install sounddevice
@@ -284,42 +290,91 @@ async def main():
     if args.captions:
         post("/api/mode", {"mode": args.captions})
 
+    dev = sd.query_devices(args.device if args.device is not None else sd.default.device[0])
+    print(f"Mic: '{dev['name']}', speech-to-text: {stt or 'off'}, server: {SERVER}. Ctrl+C to quit.")
+
+    # The mic is only open while a session is running (Start / End session on the Alex or Notes page).
+    active, idle = asyncio.Event(), asyncio.Event()
+    idle.set()
+    watcher = asyncio.create_task(watch_session(active, idle))
+    if args.now:
+        post("/api/session/start", {})
+
     loop = asyncio.get_running_loop()
-    rec = Recorder()
-    audio_q: asyncio.Queue = asyncio.Queue(maxsize=200)
-    phrase_q: asyncio.Queue = asyncio.Queue()
-    cutter = PhraseCutter(pause_s=args.pause)
+    try:
+        while True:
+            if not active.is_set():
+                print("Waiting for Start session on the Alex or Notes page (mic is off)...")
+            await active.wait()
 
-    def on_audio(indata, frames, t, status):
-        if status:
-            print(f"[mic] {status}")
-        block = indata[:, 0].copy()
-        rec.add_audio(block)
-        if stt == "elevenlabs":
-            def put():
-                if not audio_q.full():
-                    audio_q.put_nowait(block.tobytes())
-            loop.call_soon_threadsafe(put)
-        elif stt == "gemini":
-            phrase = cutter.add(block)
-            if phrase:
-                loop.call_soon_threadsafe(phrase_q.put_nowait, phrase)
+            rec = Recorder()
+            audio_q: asyncio.Queue = asyncio.Queue(maxsize=200)
+            phrase_q: asyncio.Queue = asyncio.Queue()
+            cutter = PhraseCutter(pause_s=args.pause)
 
-    cfg = get("/api/config") or {}
-    keyterms = cfg.get("keyterms", [])
+            def on_audio(indata, frames, t, status, rec=rec, audio_q=audio_q, phrase_q=phrase_q, cutter=cutter):
+                if status:
+                    print(f"[mic] {status}")
+                block = indata[:, 0].copy()
+                rec.add_audio(block)
+                if stt == "elevenlabs":
+                    def put():
+                        if not audio_q.full():
+                            audio_q.put_nowait(block.tobytes())
+                    loop.call_soon_threadsafe(put)
+                elif stt == "gemini":
+                    phrase = cutter.add(block)
+                    if phrase:
+                        loop.call_soon_threadsafe(phrase_q.put_nowait, phrase)
 
-    with sd.InputStream(samplerate=SR, channels=1, dtype="int16", blocksize=int(SR * BLOCK_S),
-                        device=args.device, callback=on_audio):
-        dev = sd.query_devices(args.device if args.device is not None else sd.default.device[0])
-        print(f"Listening on '{dev['name']}', speech-to-text: {stt or 'off'}, sending to {SERVER}. Ctrl+C to stop.")
-        if stt == "gemini":
-            print("Captions appear after each pause (about 1-2 s).")
-        tasks = [feature_loop(rec, use_asr)]
-        if stt == "elevenlabs":
-            tasks.append(scribe_loop(rec, audio_q, el_key, keyterms))
-        elif stt == "gemini":
-            tasks.append(gemini_stt_loop(rec, phrase_q, keyterms))
-        await asyncio.gather(*tasks)
+            keyterms = (get("/api/config") or {}).get("keyterms", [])  # lesson material may have changed
+            with sd.InputStream(samplerate=SR, channels=1, dtype="int16", blocksize=int(SR * BLOCK_S),
+                                device=args.device, callback=on_audio):
+                print(f"[{time.strftime('%H:%M:%S')}] Session started: listening.")
+                if stt == "gemini":
+                    print("Captions appear after each pause (about 1-2 s).")
+                jobs = [feature_loop(rec, use_asr)]
+                if stt == "elevenlabs":
+                    jobs.append(scribe_loop(rec, audio_q, el_key, keyterms))
+                elif stt == "gemini":
+                    jobs.append(gemini_stt_loop(rec, phrase_q, keyterms))
+                tasks = [asyncio.create_task(j) for j in jobs]
+                await idle.wait()          # End session pressed (or server gone)
+                for t in tasks:
+                    t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+            print(f"[{time.strftime('%H:%M:%S')}] Session ended: mic off.")
+    finally:
+        watcher.cancel()
+
+
+async def watch_session(active: asyncio.Event, idle: asyncio.Event):
+    """Follow the server's session state over /ws/state; mic on only while a session runs."""
+    import websockets
+
+    base = SERVER.rstrip("/")
+    url = ("wss://" + base[8:] if base.startswith("https://") else "ws://" + base.removeprefix("http://")) \
+        + "/ws/state?client=mic"
+    warned = False
+    while True:
+        try:
+            async with websockets.connect(url, ping_interval=20) as ws:
+                warned = False
+                async for raw in ws:
+                    m = json.loads(raw)
+                    if m.get("type") != "state":
+                        continue
+                    on = bool((m.get("session") or {}).get("active"))
+                    (active.set if on else active.clear)()
+                    (idle.clear if on else idle.set)()
+        except Exception as e:
+            # server restarted or unreachable: stop listening until it's back
+            active.clear()
+            idle.set()
+            if not warned:
+                print(f"[session] lost the server ({e.__class__.__name__}); retrying...")
+                warned = True
+            await asyncio.sleep(2)
 
 
 if __name__ == "__main__":

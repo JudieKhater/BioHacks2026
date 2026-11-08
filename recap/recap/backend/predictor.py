@@ -520,7 +520,7 @@ def build_notes(lines: list[str], lib: ContextLibrary, previous: Optional[dict] 
         + (f"Previous notes topic: {previous.get('topic')}\n" if previous and previous.get("topic") else "")
         + f"Transcript so far:\n{transcript}\n"
     )
-    out = gemini.generate_json(prompt, timeout=40)
+    out = gemini.generate_json(prompt, timeout=40, fallback_model=config.GEMINI_LIVE_MODEL)
     if not out:
         return _offline_notes(lines, lib)
 

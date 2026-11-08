@@ -76,7 +76,7 @@ def alex_at(frac: float, day_decline: float = 0.0, noise: float = 1.0) -> dict:
             "confidence": round(0.97 - 0.07 * fatigue, 3)}
 
 
-def run_lesson(word_s: float = 0.28, stall_s: float = 3.0):
+def run_lesson(word_s: float = 0.28, stall_s: float = 3.0, end_session: bool = True):
     """
     Teach the CN III infographic with growing fatigue: partial captions word by word
     (like Scribe), stalls mid-sentence so predictions appear, then the committed line.
@@ -85,6 +85,10 @@ def run_lesson(word_s: float = 0.28, stall_s: float = 3.0):
     post("/api/baseline", {"wpm": 165, "loudness_db": -20, "breath_group_words": 12, "effort_per_output": 10.0})
     post("/api/mode", {"mode": "on"})
     post("/api/predict", {"on": True})
+    try:
+        post("/api/session/start", {})   # same as pressing Start session
+    except Exception:
+        pass
     for text, stall_at, fatigue in LESSON_CN3:
         post("/api/features", alex_at(fatigue))
         words = (stall_at or text).split()
@@ -98,6 +102,9 @@ def run_lesson(word_s: float = 0.28, stall_s: float = 3.0):
         post("/api/captions", {"text": text, "final": True})
         print(f"said: {text}")
         time.sleep(2.0 if stall_at else 1.0)
+    if end_session:
+        r = post("/api/session/end", {})   # same as pressing End session
+        print(f"Session ended: report at {SERVER}/report.html?id={r['id']}")
     print("Lesson done. Open /notes.html for the notes, /recap.html for the recap.")
 
 
@@ -125,7 +132,12 @@ def backfill(days: int):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
     import config
     from db import make_store
+    import predictor
     store = make_store(config.DATABASE_URL, config.SQLITE_PATH)
+    lib = predictor.ContextLibrary()
+    lib.load_dir(config.CONTEXT_DIR)
+    lesson = lib.sentences
+    past_reports: list[dict] = []   # newest first, like the server reads them
     now = datetime.now()
     for d in range(days, 0, -1):
         day = (now - timedelta(days=d)).replace(hour=9, minute=0, second=0, microsecond=0)
@@ -139,7 +151,44 @@ def backfill(days: int):
             store.insert_features(ts.timestamp(), {**f, "score": round(score, 1), "captions_on": int(score > 55)})
         store.insert_emst((day + timedelta(minutes=-30)).timestamp(), random.choice([20, 25, 25, 25]),
                           45 + random.gauss(0, 3) + 6 * (days - d) / days, 40)
+        # two teaching sessions a day (first period and early afternoon) for the session trends
+        for start_k, end_k in ((0, 12), (60, 72)):
+            r = _backfill_session(day, start_k, end_k, decline, past_reports, lesson)
+            store.insert_session(r)
+            past_reports.insert(0, r)
         print("backfilled", day.date())
+
+
+def _backfill_session(day, start_k, end_k, decline, previous, lesson):
+    """Build a past session report exactly the way the server does at End session."""
+    from fatigue import FatigueEngine, FeatureWindow
+    import sessions
+    import speech_symptoms
+
+    eng = FatigueEngine()
+    eng.set_baseline(wpm=165, loudness_db=-20, breath_group_words=12, effort_per_output=10.0)
+    eng.state.score = 10.0 if start_k == 0 else 45.0   # battery 90% first period; afternoons start tired
+    t0 = (day + timedelta(minutes=5 * start_k)).timestamp()
+    rec = sessions.SessionRecorder.start(now=t0, battery=eng.battery)
+    for k in range(start_k, end_k):
+        ts = (day + timedelta(minutes=5 * k)).timestamp()
+        f = alex_at(k / 84, decline, noise=0.8)
+        s = eng.update(FeatureWindow(t=ts, wpm=f["wpm"], loudness_db=f["loudness_db"],
+                                     breath_group_words=f["breath_group_words"], effort=f["effort"],
+                                     speaking_s=f["speaking_s"]))
+        rec.add_window(ts, f, s.score, eng.battery)
+        fat = k / 84
+        for _ in range(4):   # a few sentences per window, stumbling more when tired
+            d = speech_symptoms.Disfluency(words=12, repetitions=int(random.random() < 0.15 + 0.4 * fat),
+                                           part_words=int(random.random() < 0.08 + 0.3 * fat),
+                                           fillers=int(random.random() < 0.2), trailing=random.random() < 0.1 + 0.3 * fat)
+            rec.add_utterance(d, ts)
+        if random.random() < 0.2 + 0.4 * fat:
+            rec.predictions += 1
+    ended = (day + timedelta(minutes=5 * end_k)).timestamp()
+    r = rec.report(ended, eng.snapshot(), previous, lesson)
+    r["summary"] = {"text": sessions.offline_summary(r), "source": "offline"}
+    return r
 
 
 def breath(reps: int = 10, target: float = 40):

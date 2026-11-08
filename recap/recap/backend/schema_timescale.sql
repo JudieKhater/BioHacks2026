@@ -42,6 +42,16 @@ CREATE TABLE IF NOT EXISTS consent_events (
     chain_tx     TEXT
 );
 
+-- One row per teaching session (Start -> End): the session report with its
+-- measures, guidance and breathing plan. Numbers and guidance only, no transcript.
+CREATE TABLE IF NOT EXISTS sessions (
+    id      TEXT PRIMARY KEY,
+    started TIMESTAMPTZ NOT NULL,
+    ended   TIMESTAMPTZ NOT NULL,
+    report  JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions (started DESC);
+
 -- Hourly rollup the clinic can query over months without scanning raw rows.
 -- Continuous aggregates refresh themselves on the policy below.
 CREATE MATERIALIZED VIEW IF NOT EXISTS speech_hourly

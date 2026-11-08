@@ -39,6 +39,7 @@ import consent  # noqa: E402
 import gemini  # noqa: E402
 import predictor  # noqa: E402
 import recap_ai  # noqa: E402
+import sessions  # noqa: E402
 import speech_symptoms as symptoms  # noqa: E402
 from db import make_store  # noqa: E402
 from fatigue import FatigueEngine, FeatureWindow  # noqa: E402
@@ -75,6 +76,12 @@ recent_hints: deque[str] = deque(maxlen=8)
 _tasks: dict[str, Optional[asyncio.Task]] = {"stall": None}
 _gemini_live = asyncio.Semaphore(1)
 _live_calls = {"last": 0.0}
+# The teaching session in progress (None between "End session" and "Start session").
+# The mic client only listens while one is running.
+current: dict[str, Optional[sessions.SessionRecorder]] = {"session": None}
+mic_clients: set[WebSocket] = set()
+_session_lock = asyncio.Lock()
+_last_report: dict = {"value": None}   # the most recent report, served while it's being saved
 
 
 def all_keyterms() -> list[str]:
@@ -120,6 +127,9 @@ def state_msg() -> dict:
     snap["ts"] = time.time()
     snap["store"] = store.kind
     snap["predict"] = live["predict"]
+    s = current["session"]
+    snap["session"] = {"active": s is not None, "id": s.id if s else None, "started": s.started if s else None}
+    snap["mic_connected"] = bool(mic_clients)
     return snap
 
 
@@ -212,6 +222,12 @@ async def _send_assist(line_id: int, pred: predictor.Prediction, final: bool):
                 break
 
 
+def _count_prediction():
+    symptom_monitor.predictions_used += 1
+    if current["session"]:
+        current["session"].predictions += 1
+
+
 async def _predict(line_id: int, raw: str, final: bool):
     """Instant offline guess, then a Gemini refinement that replaces it."""
     pred = predictor.offline_predict(raw, library, stalled=True)
@@ -227,7 +243,7 @@ async def _predict(line_id: int, raw: str, final: bool):
     can_call = gemini.available(config.GEMINI_LIVE_MODEL) or gemini.available(config.GEMINI_MODEL)
     if throttled or _gemini_live.locked() or not can_call:
         if final and shown:
-            symptom_monitor.predictions_used += 1
+            _count_prediction()
         return
     _live_calls["last"] = now
     async with _gemini_live:
@@ -236,7 +252,7 @@ async def _predict(line_id: int, raw: str, final: bool):
                                          notes_state.get("topic", ""))
     if better is None:
         if final and shown:
-            symptom_monitor.predictions_used += 1
+            _count_prediction()
         return
     if not final and (line["id"] != line_id or line["raw"] != raw):
         return  # he kept talking; the guess is stale
@@ -245,7 +261,7 @@ async def _predict(line_id: int, raw: str, final: bool):
     if better.predicted or shown:
         await _send_assist(line_id, better, final)
     if final and better.predicted:
-        symptom_monitor.predictions_used += 1
+        _count_prediction()
 
 
 async def _stall_watch(line_id: int, raw: str):
@@ -270,6 +286,10 @@ class FeaturesIn(BaseModel):
 class CaptionIn(BaseModel):
     text: str
     final: bool = False
+
+
+class SessionStartIn(BaseModel):
+    captions: Optional[str] = Field(default=None, pattern="^(auto|on|off)$")
 
 
 class SensorIn(BaseModel):
@@ -353,6 +373,8 @@ async def post_features(f: FeaturesIn):
         latest_features.update(ts=ts, wpm=f.wpm, loudness_db=f.loudness_db,
                                breath_group_words=f.breath_group_words, pause_pct=f.pause_pct)
         await asyncio.to_thread(store.insert_features, ts, row)
+        if current["session"]:
+            current["session"].add_window(ts, {**f.model_dump(), "effort": effort}, s.score, engine.battery)
     await push_state()
     await hub.send("notes", symptoms_msg())
     return state_msg()
@@ -387,6 +409,8 @@ async def post_caption(c: CaptionIn):
                  "predicted": "", "source": "none"}
         transcript_today.append(entry)
         symptom_monitor.add(disfl)
+        if current["session"]:
+            current["session"].add_utterance(disfl)
         notes_dirty["value"] = True
         await hub.send("notes", {"type": "line", **entry, "disfluency": disfl.as_dict()})
         if not disfl.trailing:
@@ -479,6 +503,74 @@ async def clinic_projection(days: int = 90, onset: str = "bulbar"):
 
 
 # ------------------------------------------------- notes, symptoms, context
+# ----------------------------------------------------------------- sessions
+@app.get("/api/session")
+def get_session_state():
+    return state_msg()["session"] | {"mic_connected": bool(mic_clients)}
+
+
+@app.post("/api/session/start", dependencies=[Depends(require_token)])
+async def session_start(body: Optional[SessionStartIn] = None):
+    """Start listening. The mic client opens the mic when it sees this."""
+    async with _session_lock:
+        _roll_day()
+        if current["session"] is None:
+            current["session"] = sessions.SessionRecorder.start(battery=engine.battery)
+            print(f"[session] started {current['session'].id}")
+        if body and body.captions:
+            engine.set_mode(body.captions, time.time())
+    await push_state()
+    return state_msg()["session"]
+
+
+@app.post("/api/session/end", dependencies=[Depends(require_token)])
+async def session_end():
+    """Stop listening and build the session report (guidance + breathing plan), saved for trends."""
+    async with _session_lock:
+        s = current["session"]
+        if s is None:
+            raise HTTPException(409, "no session is running")
+        current["session"] = None
+    await push_state()  # the mic client closes the mic now; the report can take a few seconds
+    previous = await asyncio.to_thread(store.list_sessions, 10)
+    report = s.report(time.time(), engine.snapshot(), previous, library.sentences)
+    report["summary"] = await asyncio.to_thread(recap_ai.session_summary, report)
+    if not report["empty"]:
+        await asyncio.to_thread(store.insert_session, report)
+    report["saved"] = not report["empty"]
+    print(f"[session] ended {s.id}: {report['speaking_min']} min of speech, readiness "
+          f"{report['breathing'].get('readiness')}")
+    await hub.send("state", {"type": "session_report", "id": s.id, "saved": report["saved"]})
+    await hub.send("notes", {"type": "session_report", "id": s.id, "saved": report["saved"]})
+    _last_report["value"] = report
+    return report
+
+
+@app.get("/api/sessions")
+async def list_sessions(limit: int = 30):
+    """Past sessions, newest first, as compact rows for the trend charts."""
+    reports = await asyncio.to_thread(store.list_sessions, max(1, min(limit, 365)))
+    return {"sessions": [sessions.summary_row(r) for r in reports]}
+
+
+@app.get("/api/sessions/{sid}")
+async def get_session_report(sid: str):
+    if sid == "latest":
+        last = _last_report["value"]
+        if last:
+            return last
+        reports = await asyncio.to_thread(store.list_sessions, 1)
+        if reports:
+            return reports[0]
+        raise HTTPException(404, "no sessions yet")
+    if _last_report["value"] and _last_report["value"]["id"] == sid:
+        return _last_report["value"]
+    r = await asyncio.to_thread(store.get_session, sid)
+    if not r:
+        raise HTTPException(404, "session not found")
+    return r
+
+
 @app.get("/api/notes")
 def get_notes():
     return {"notes": notes_state, "transcript": transcript_today[-200:], "predict": live["predict"]}
@@ -602,8 +694,18 @@ async def _ws_loop(ch: str, ws: WebSocket, hello: Optional[list[dict]] = None):
 
 
 @app.websocket("/ws/state")
-async def ws_state(ws: WebSocket):
-    await _ws_loop("state", ws, [state_msg()])
+async def ws_state(ws: WebSocket, client: str = ""):
+    # The mic client connects as ?client=mic so the pages can show whether it's running.
+    is_mic = client == "mic"
+    if is_mic:
+        mic_clients.add(ws)
+        await push_state()  # tell the pages the mic client is ready
+    try:
+        await _ws_loop("state", ws, [state_msg()])
+    finally:
+        if is_mic:
+            mic_clients.discard(ws)
+            await push_state()
 
 
 @app.websocket("/ws/captions")

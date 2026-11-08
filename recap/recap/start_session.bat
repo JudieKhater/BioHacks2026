@@ -1,7 +1,9 @@
 @echo off
-rem Recap: start a live session with the microphone.
+rem Recap: get everything ready for a live session with the microphone.
 rem Opens three windows: the server, the on-screen caption overlay, and the mic client.
-rem Close the "Recap mic" window to stop listening; close "Recap server" to stop everything.
+rem The mic stays OFF until you press "Start session" on the page that opens, and turns off
+rem again at "End session", which builds your session report and breathing plan.
+rem Close "Recap server" to stop everything.
 rem Usage: double-click, or   start_session.bat demo   to play the CN III lesson instead of the mic.
 
 cd /d "%~dp0"
@@ -33,4 +35,4 @@ if /i "%1"=="demo" (
   start "Recap mic" "%PY%" client\audio_client.py --captions on
 )
 start "" http://127.0.0.1:8000/notes.html
-echo Recap is running. Notes: http://127.0.0.1:8000/notes.html
+echo Recap is ready. Press Start session on http://127.0.0.1:8000/notes.html to begin listening.
