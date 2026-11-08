@@ -21,6 +21,8 @@
 <div class="wrap">
   <header class="top"><h1>Your voice today</h1><nav id="nav"></nav></header>
 
+  <section class="card" id="sessionCard" style="margin-bottom:16px"></section>
+
   <div class="grid">
     <section class="card">
       <div class="battery">
@@ -155,7 +157,12 @@
   }
   function fmtT(ts) { return new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
 
-  liveSocket("/ws/state", showState);
+  const session = sessionControl(document.getElementById("sessionCard"));
+  liveSocket("/ws/state", m => {
+    if (m.type === "session_report") { if (m.saved) location.href = `/report.html?id=${encodeURIComponent(m.id)}`; return; }
+    if (m.type !== "state") return;
+    showState(m); session.update(m);
+  });
   loadConsent(); loadToday(); setInterval(loadToday, 15000);
 </script>
 </body>

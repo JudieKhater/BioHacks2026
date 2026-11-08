@@ -42,11 +42,13 @@
 <div class="wrap" style="max-width:1160px">
   <header class="top"><h1>Live notes</h1><nav id="nav"></nav></header>
 
+  <section class="card" id="sessionCard" style="margin-bottom:16px"></section>
+
   <section class="card">
     <div class="row">
       <div>
         <p class="muted small" style="margin:0">Now discussing</p>
-        <p class="topic" id="topic">Waiting for Alex to start…</p>
+        <p class="topic" id="topic">Press Start session to begin</p>
       </div>
       <div style="text-align:right">
         <p class="muted small" style="margin:0"><span class="status-dot" id="dot"></span><span id="src">connecting…</span></p>
@@ -166,6 +168,13 @@
       (c.glossary_source === "gemini" ? `<span class="muted small">glossary by Gemini</span>` : "");
   }
 
+  const session = sessionControl($("sessionCard"));
+  liveSocket("/ws/state", m => {
+    if (m.type !== "state") return;
+    session.update(m);
+    if (m.session.active && $("topic").textContent === "Press Start session to begin") $("topic").textContent = "Listening…";
+  });
+
   liveSocket("/ws/notes", m => {
     if (m.type === "notes") showNotes(m);
     else if (m.type === "symptoms") showSymptoms(m);
@@ -175,7 +184,7 @@
       if (m.final && lines.has(m.id)) { const l = lines.get(m.id); l.text = m.clean || l.text; l.predicted = m.predicted; }
       else if (!m.final) partial = { text: m.clean, predicted: m.predicted };
       renderTranscript();
-    } else if (m.type === "reset") { lines.clear(); partial = null; renderTranscript(); $("topic").textContent = "Waiting for Alex to start…"; }
+    } else if (m.type === "reset") { lines.clear(); partial = null; renderTranscript(); $("topic").textContent = "Press Start session to begin"; }
   }, live => $("dot").classList.toggle("live", live));
 
   api("/api/notes").then(r => { r.transcript.forEach(t => lines.set(t.id, t)); renderTranscript(); });

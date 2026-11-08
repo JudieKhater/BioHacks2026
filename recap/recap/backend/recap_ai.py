@@ -14,6 +14,7 @@ import json
 import re
 from typing import Optional
 
+import config
 import gemini
 
 
@@ -63,6 +64,28 @@ def draft_recap(transcript_lines: list[str], keyterms: list[str], k: int = 5) ->
         idx, source = _fallback_pick(sentences, keyterms, k), "offline"
     # verbatim copy: the model only chose numbers
     return {"sentences": [sentences[i] for i in idx], "all": sentences, "source": source}
+
+
+def session_summary(report: dict) -> dict:
+    """A short, plain-language paragraph for Alex about the session he just finished. Numbers only in."""
+    import sessions  # local import: sessions imports breathing/speech_symptoms
+    offline = sessions.offline_summary(report)
+    if report.get("empty"):
+        return {"text": offline, "source": "offline"}
+    facts = {k: report.get(k) for k in ("duration_min", "speaking_min", "battery_start", "battery_end",
+                                        "stumbles_per_100_words", "predictions_used", "pct_time_under_120_wpm")}
+    facts["measures_start_vs_end"] = report.get("measures")
+    facts["vs_recent_sessions"] = report.get("comparison")
+    facts["breathing_readiness"] = (report.get("breathing") or {}).get("readiness")
+    prompt = (
+        "Write 3-4 short, warm, plain sentences to a teacher with ALS about the teaching session he just finished, "
+        "in the second person. Use only these numbers; mention what changed from the start to the end of the session "
+        "and anything better or worse than his recent sessions. No diagnosis, no medical advice, no exercises "
+        "(those are listed separately), no exclamation marks.\n\n" + json.dumps(facts)
+    )
+    # if the main model is out of quota, the live model (separate quota) can write three sentences
+    text = gemini.generate(prompt, timeout=15, fallback_model=config.GEMINI_LIVE_MODEL)
+    return {"text": text.strip(), "source": "gemini"} if text else {"text": offline, "source": "offline"}
 
 
 def clinic_summary(trends: list[dict]) -> dict:

@@ -88,8 +88,55 @@ function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// Start / End session control. `el` is an empty element; call update(state) with each /ws/state message.
+// Ending a session builds the report and opens it.
+function sessionControl(el) {
+  el.innerHTML = `<div class="session-bar">
+      <div><span class="status-dot" data-dot></span><b data-title>Session</b>
+        <div class="muted small" data-sub>connecting…</div></div>
+      <button class="primary" data-btn disabled>Start session</button></div>`;
+  const btn = el.querySelector("[data-btn]"), title = el.querySelector("[data-title]"),
+        sub = el.querySelector("[data-sub]"), dot = el.querySelector("[data-dot]");
+  let st = null, timer = null, busy = false;
+  function tick() {
+    if (!st || !st.session.active) return;
+    const mins = Math.floor((Date.now() / 1000 - st.session.started) / 60);
+    sub.textContent = `Listening for ${mins} min` + (st.mic_connected ? "" : " · mic client not running");
+  }
+  function update(s) {
+    if (!s || !s.session || busy) return;
+    st = s;
+    const on = s.session.active;
+    dot.classList.toggle("live", on);
+    title.textContent = on ? "Session running" : "No session running";
+    btn.textContent = on ? "End session" : "Start session";
+    btn.classList.toggle("primary", !on);
+    btn.disabled = false;
+    clearInterval(timer);
+    if (on) { tick(); timer = setInterval(tick, 15000); }
+    else sub.textContent = s.mic_connected ? "The mic is off until you start."
+      : "Mic client not running: open start_session.bat (or run client/audio_client.py).";
+  }
+  btn.onclick = async () => {
+    if (!st) return;
+    btn.disabled = true;
+    if (!st.session.active) {
+      try { await api("/api/session/start", {}); } catch (e) { sub.textContent = "Couldn't start: " + e.message; btn.disabled = false; }
+      return;
+    }
+    busy = true;
+    btn.textContent = "Building report…";
+    sub.textContent = "Mic off. Working out your guidance and breathing plan.";
+    try {
+      const r = await api("/api/session/end", {});
+      location.href = `/report.html?id=${encodeURIComponent(r.id)}`;
+    } catch (e) { busy = false; sub.textContent = "Couldn't end the session: " + e.message; btn.disabled = false; }
+  };
+  return { update };
+}
+
 function nav(active) {
   const links = [["/", "Home"], ["/alex.html", "Alex"], ["/captions.html", "Captions"], ["/notes.html", "Notes"],
-                 ["/trainer.html", "Breathing"], ["/recap.html", "Recap"], ["/clinic.html", "Clinic"]];
+                 ["/report.html", "Report"], ["/trainer.html", "Breathing"], ["/recap.html", "Recap"], ["/clinic.html", "Clinic"]];
   return links.map(([h, t]) => `<a href="${h}"${t === active ? ' aria-current="page"' : ""}>${t}</a>`).join("");
 }

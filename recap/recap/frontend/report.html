@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recap Session Report</title>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-top: 12px; }
+  .tile { border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .tile .k { font-size: .82rem; color: var(--muted); }
+  .tile .v { font-size: 1.45rem; font-weight: 700; margin: 2px 0; }
+  .tile .c { font-size: .8rem; }
+  .better { color: var(--good); } .worse { color: var(--warn); } .same { color: var(--muted); }
+  .pill.recover { background: var(--warn); color: #fff; } .pill.light { background: var(--chart-2); color: #111; }
+  .pill.standard { background: var(--good); color: #fff; }
+  .tip { border-left: 4px solid var(--accent); padding: 8px 12px; margin: 8px 0; background: var(--bg); border-radius: 0 8px 8px 0; }
+  .tip.alert { border-color: var(--warn); } .tip.watch { border-color: var(--chart-2); }
+  .tip b { display: block; }
+  .ex { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 12px; }
+  .ex h3 { margin: 0 0 4px; font-size: 1.05rem; }
+  .ex ol { margin: 8px 0; padding-left: 1.2em; } .ex li { margin: .25em 0; }
+  .meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: .88rem; }
+  .why { font-size: .9rem; margin: 6px 0 2px; } .src { font-size: .78rem; color: var(--muted); }
+  .passage { font-size: 1.25rem; line-height: 1.9; background: var(--bg); border-radius: 10px; padding: 12px 14px; margin: 8px 0; }
+  .passage .mark { color: var(--accent); font-weight: 700; padding: 0 .35em; }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 700; }
+  .charts canvas { height: 180px; }
+</style>
+</head>
+<body>
+<div class="wrap" style="max-width:1080px">
+  <header class="top"><h1>Session report</h1><nav id="nav"></nav></header>
+
+  <section class="card" id="none" hidden>
+    <h2>No sessions yet</h2>
+    <p class="muted">Press <b>Start session</b> on the <a href="/alex.html">Alex</a> or <a href="/notes.html">Notes</a> page,
+      teach, then press <b>End session</b>. Your report appears here.</p>
+  </section>
+
+  <div id="content" hidden>
+    <section class="card">
+      <div class="row">
+        <div>
+          <p class="muted small" style="margin:0" id="when"></p>
+          <p class="big" style="font-size:1.35rem;margin:4px 0" id="readinessText"></p>
+        </div>
+        <span class="pill" id="readiness"></span>
+      </div>
+      <p id="summary"></p>
+      <p class="muted small" id="summarySrc"></p>
+      <div class="tiles" id="tiles"></div>
+    </section>
+
+    <section class="card" style="margin-top:16px" id="flagsCard" hidden>
+      <h2>Worth raising with your clinic</h2>
+      <div id="flags"></div>
+    </section>
+
+    <div class="grid" style="margin-top:16px">
+      <section class="card">
+        <h2>Guidance for now</h2>
+        <div id="guidance"></div>
+      </section>
+      <section class="card">
+        <h2>How each part of your speech did</h2>
+        <div id="subs"></div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <div class="row"><h2 style="margin:0">Breathing plan</h2><span class="muted small" id="phraseWords"></span></div>
+      <p class="note small" id="safety"></p>
+      <div id="exercises"></div>
+      <p class="muted small" style="margin-top:12px">Built from this session's measurements. The research behind it measures
+        speech breathing (percent pause, words per breath) and sets warning thresholds; it doesn't test these exercises.
+        Each card says where its idea comes from.</p>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:16px" id="trendCard" hidden>
+    <h2>Trends over your sessions</h2>
+    <p class="muted small" id="trendSub"></p>
+    <div class="grid charts">
+      <div><b class="small">Speaking rate (wpm)</b><canvas id="cWpm"></canvas>
+        <div class="legend"><span><i style="background:var(--chart-1)"></i>Trend (last 6 sessions)</span>
+          <span><i style="background:var(--line)"></i>Each session</span><span><i style="background:var(--warn)"></i>120 wpm marker</span></div></div>
+      <div><b class="small">Words per breath</b><canvas id="cBg"></canvas></div>
+      <div><b class="small">Pauses (% of speaking time)</b><canvas id="cPause"></canvas></div>
+      <div><b class="small">Stumbles per 100 words</b><canvas id="cStum"></canvas></div>
+    </div>
+    <h2 style="margin-top:18px">All sessions</h2>
+    <div style="overflow-x:auto"><table id="list"></table></div>
+  </section>
+</div>
+<script src="/common.js"></script>
+<script>
+  document.getElementById("nav").innerHTML = nav("Report");
+  const $ = id => document.getElementById(id);
+  const fmtDate = ts => new Date(ts * 1000).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const fmtTime = ts => new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const num = (v, d = 0) => v == null ? "–" : Number(v).toFixed(d);
+  const READY = { recover: "Rest first", light: "Light practice", standard: "Normal practice" };
+
+  function tile(label, start, end, d, unit, cmp) {
+    const c = cmp ? `<div class="c ${cmp.verdict}">${cmp.verdict === "same" ? "about your usual" :
+      cmp.verdict === "better" ? "better than usual" : "weaker than usual"} (usual ${num(cmp.usual, d)}${unit})</div>` : "";
+    const v = start != null && end != null ? `${num(start, d)} → ${num(end, d)}${unit}` : `${num(end ?? start, d)}${unit}`;
+    return `<div class="tile"><div class="k">${label}</div><div class="v">${v}</div>${c}</div>`;
+  }
+
+  function showReport(r) {
+    $("content").hidden = false;
+    $("when").textContent = `${fmtDate(r.started)} – ${fmtTime(r.ended)} · ${r.duration_min} min session, ${r.speaking_min} min of speech`;
+    const b = r.breathing || {};
+    $("readiness").textContent = READY[b.readiness] || "";
+    $("readiness").className = "pill " + (b.readiness || "");
+    $("readinessText").textContent = b.readiness_text || b.note || "";
+    $("summary").textContent = (r.summary && r.summary.text) || "";
+    $("summarySrc").textContent = r.summary && r.summary.source === "gemini" ? "Summary written by Gemini from the numbers below." : "";
+    const cmp = Object.fromEntries((r.comparison || []).map(c => [c.key, c]));
+    const m = r.measures || {};
+    $("tiles").innerHTML = r.empty ? "" : [
+      tile("Speaking rate (start → end)", m.wpm?.start, m.wpm?.end, 0, " wpm", cmp.wpm),
+      tile("Words per breath", m.breath_group_words?.start, m.breath_group_words?.end, 1, "", cmp.breath_group_words),
+      tile("Pauses", m.pause_pct?.start, m.pause_pct?.end, 0, "%", cmp.pause_pct),
+      tile("Loudness", m.loudness_db?.start, m.loudness_db?.end, 1, " dB", cmp.loudness_db),
+      tile("Stumbles per 100 words", null, r.stumbles_per_100_words, 1, "", cmp.stumbles_per_100_words),
+      tile("Speech battery", r.battery_start, r.battery_end, 0, "%", cmp.battery_end),
+      `<div class="tile"><div class="k">Sentences finished by prediction</div><div class="v">${r.predictions_used ?? 0}</div>` +
+        `<div class="c same">under 120 wpm: ${r.pct_time_under_120_wpm ?? "–"}% of the time</div></div>`,
+    ].join("");
+
+    $("flagsCard").hidden = !(r.flags || []).length;
+    $("flags").innerHTML = (r.flags || []).map(f =>
+      `<div class="tip ${f.level}"><span class="small">${escapeHtml(f.text)}</span><div class="src">${escapeHtml(f.source)}</div></div>`).join("");
+    $("guidance").innerHTML = (r.guidance || []).map(t =>
+      `<div class="tip ${t.level}"><b>${escapeHtml(t.title)}</b><span class="small">${escapeHtml(t.text)}</span></div>`).join("")
+      || `<p class="muted small">Nothing to suggest.</p>`;
+    $("subs").innerHTML = (r.subsystems || []).map(x =>
+      `<div style="margin:8px 0"><b>${escapeHtml(x.name)}</b> <span class="pill">${x.level === "unknown" ? "n/a" : x.level}</span>
+       <div class="small">${escapeHtml(x.detail)}</div></div>`).join("");
+
+    $("safety").textContent = b.safety || "";
+    $("phraseWords").textContent = b.phrase_words ? `Phrase length for practice: ${b.phrase_words} words per breath` : "";
+    $("exercises").innerHTML = (b.exercises || []).map(e => `
+      <div class="ex">
+        <h3>${escapeHtml(e.name)}</h3>
+        <div class="meta"><span><b>When:</b> ${escapeHtml(e.when)}</span><span><b>How much:</b> ${escapeHtml(e.dose)}</span></div>
+        <ol>${e.steps.map(s => `<li>${escapeHtml(s)}</li>`).join("")}</ol>
+        ${e.passage ? `<div class="passage">${e.passage.map(escapeHtml).join('<span class="mark">/</span>')}<span class="mark">/</span></div>` : ""}
+        ${e.link ? `<p class="small"><a href="${e.link}">Open the breathing trainer →</a></p>` : ""}
+        <p class="why">${escapeHtml(e.why)}</p>
+        <p class="src">Source: ${escapeHtml(e.source)}</p>
+      </div>`).join("") || `<p class="muted">${escapeHtml(b.note || "")}</p>`;
+  }
+
+  async function showTrends(currentId) {
+    const { sessions } = await api("/api/sessions?limit=60");
+    const rows = sessions.filter(s => !s.empty).reverse();   // oldest first
+    if (!rows.length) return;
+    $("trendCard").hidden = false;
+    $("trendSub").textContent = `${rows.length} session${rows.length === 1 ? "" : "s"} since ` +
+      `${new Date(rows[0].started * 1000).toLocaleDateString([], { month: "long", day: "numeric" })}. ` +
+      "Daily morning/afternoon trends are on the Clinic page.";
+    const x = s => s.started;
+    const labels = rows.length > 1 ? [[x(rows[0]), new Date(rows[0].started * 1000).toLocaleDateString([], { month: "short", day: "numeric" })],
+      [x(rows[rows.length - 1]), new Date(rows[rows.length - 1].started * 1000).toLocaleDateString([], { month: "short", day: "numeric" })]] : [];
+    // Sessions alternate fresh (mornings) and tired (afternoons), so the raw line zigzags.
+    // The trend is a rolling average of the last 6 sessions (an even number, so mornings and afternoons
+    // balance out); single sessions are drawn faintly.
+    const c1 = cssVar("--chart-1"), faint = cssVar("--line");
+    const series = key => {
+      const pts = rows.map(s => [x(s), s[key]]);
+      const avg = pts.map((p, i) => {
+        const win = pts.slice(Math.max(0, i - 5), i + 1).map(q => q[1]).filter(v => v != null);
+        return [p[0], win.length ? win.reduce((a, b) => a + b, 0) / win.length : null];
+      });
+      return [{ color: faint, points: pts }, { color: c1, points: avg }];
+    };
+    const wpms = rows.map(s => s.wpm).filter(v => v != null);
+    lineChart($("cWpm"), series("wpm"), { refLines: [{ y: 120, label: "120" }], xLabels: labels,
+      yMin: Math.min(115, ...wpms), yMax: Math.max(...wpms) });
+    lineChart($("cBg"), series("breath_group_words"), { xLabels: labels, decimals: 1 });
+    lineChart($("cPause"), series("pause_pct"), { xLabels: labels });
+    lineChart($("cStum"), series("stumbles_per_100_words"), { xLabels: labels, decimals: 1, yMin: 0 });
+    $("list").innerHTML = `<tr><th>Session</th><th>Speech</th><th>Rate</th><th>Words/breath</th><th>Pauses</th><th>Battery at end</th><th>Plan</th></tr>` +
+      [...rows].reverse().map(s => `<tr${s.id === currentId ? ' style="font-weight:700"' : ""}>
+        <td><a href="/report.html?id=${encodeURIComponent(s.id)}">${fmtDate(s.started)}</a></td>
+        <td>${num(s.speaking_min, 1)} min</td><td>${num(s.wpm)} wpm</td><td>${num(s.breath_group_words, 1)}</td>
+        <td>${num(s.pause_pct)}%</td><td>${num(s.battery_end)}%</td><td>${READY[s.readiness] || "–"}</td></tr>`).join("");
+  }
+
+  (async () => {
+    const id = new URLSearchParams(location.search).get("id") || "latest";
+    let r = null;
+    try { r = await api(`/api/sessions/${encodeURIComponent(id)}`); } catch (e) { /* none yet */ }
+    if (r) showReport(r); else $("none").hidden = false;
+    showTrends(r && r.id);
+  })();
+</script>
+</body>
+</html>

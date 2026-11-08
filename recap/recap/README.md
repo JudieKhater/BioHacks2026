@@ -20,6 +20,11 @@ on the classroom screen, so the back row stops asking him to repeat himself. It 
   term, a one-line definition appears above the captions.
 - **Speech check and guidance.** Live flags for the four speech subsystems (Green et al. 2013) plus
   stutters and trailing sentences, with energy-conserving tips for right now.
+- **Sessions on his terms.** The mic stays off until he presses **Start session**. **End session** turns
+  it off and builds a report: how his speech changed from the start to the end of the session, how it
+  compares with his recent sessions, guidance for now, a breathing plan built from that session, and
+  anything worth raising with his clinic. Every session is saved, so the report page charts his trend
+  over weeks.
 - **Speech battery.** He sees how much voice he has left today, so he can plan, not push.
 - **The recap comes back.** At the end of the day he ticks the sentences he said that matter most and
   publishes them for students: his exact words, chosen by him.
@@ -95,7 +100,8 @@ recognition for subject terms, ground the predictions, give the term definitions
 The demo file is the Group 5 A&P infographic on oculomotor nerve palsy.
 
 With a real mic (Windows: just double-click `start_session.bat`; it opens the server, the overlay and
-the mic client, each in its own window; `start_session.bat demo` plays the lesson instead):
+the mic client, each in its own window; `start_session.bat demo` plays the lesson instead). The mic
+stays off until you press **Start session** on the Alex or Notes page:
 
 ```bash
 python client/audio_client.py --captions on            # switch captions on and start listening
@@ -171,6 +177,33 @@ Grounded in the two papers in the repo root:
 
 Guidance is rule-based (not generated) so it's predictable and reviewable: voice rest, shorter
 phrases, let the mic do the work, slow the start, relax the throat. No strengthening drills.
+
+### Sessions, report and breathing plan (`backend/sessions.py`, `backend/breathing.py`)
+Start session → the mic client (idle until now) opens the mic. End session → mic off, and the server
+builds a report from that session's feature windows and stutter counts:
+- **Start vs end** of the session (first third vs last third) for speaking rate, words per breath,
+  pauses and loudness; battery; stutters; sentences finished by prediction; time under 120 wpm.
+- **Compared with his last 5 sessions** (better / same / worse).
+- **Guidance for now** (the rules above, applied to the end of the session).
+- **Breathing plan.** The papers don't test exercises; they define what to measure and when to worry,
+  and the plan is built on exactly that. Each card cites where its idea comes from:
+  - *Readiness*: a tiring session (battery < 35 %, breathing alert, high fatigue score) means rest
+    first and practise tomorrow morning. No training on a tired system.
+  - *Recovery breaths* now.
+  - *Phrase breathing*: lesson text marked with a breath every N words, N = his own words per breath
+    late in the session. It is Green et al.'s passage-reading task (percent pause), so the next report
+    shows whether it helps.
+  - *Easy sustained "ah"* (Green et al.'s voice task), comfortable not maximal, skipped when tired.
+  - *Slow starts* when his rate fell (Eshghi et al.: clarity drops quickly under 120 wpm).
+  - *EMST* only if his therapist prescribed it, mornings, never after a tiring session.
+- **Clinic flags**: > 25 % of the session under 120 wpm (Eshghi), and words per breath, pauses or rate
+  worsening across sessions (Green: weaker breathing shows as more, longer pauses; ask about a vital
+  capacity check).
+
+Reports (numbers and guidance only, no transcript) go in the `sessions` table, and `/report.html`
+charts every session with a 6-session rolling average, so mornings and afternoons balance out. The
+per-day trends on the Clinic page are unchanged. `python client/simulator.py --history 21` backfills
+three weeks of sessions; `--lesson` runs as a full session and ends with a report.
 
 ### The fatigue score (`backend/fatigue.py`)
 1. **Baseline.** Alex presses "Set baseline now" while fresh; the next 6 speaking windows are averaged.

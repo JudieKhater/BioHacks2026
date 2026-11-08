@@ -54,4 +54,6 @@ input[type=number] { font: inherit; font-size: 1.1rem; padding: 10px; width: 110
 canvas { width: 100%; height: 220px; display: block; }
 .legend { display: flex; gap: 14px; font-size: .85rem; color: var(--muted); margin-top: 6px; }
 .legend i { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin-right: 5px; }
+.session-bar { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
+.session-bar button { min-width: 190px; }
 .note { border-left: 4px solid var(--accent); padding: 8px 12px; background: var(--bg); border-radius: 0 8px 8px 0; }
