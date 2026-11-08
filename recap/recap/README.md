@@ -36,15 +36,31 @@ it. Energy conservation is the goal.
 
 ## Quick start (any laptop, 5 minutes)
 
-```bash
-git clone <this repo> && cd recap
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env                                  # add GEMINI_API_KEY; works without it
+Needs Python 3.10 or newer. API keys are optional: without them, captions, predictions and notes use
+offline methods.
+
+**Windows:** clone the repo, then double-click `setup.bat`. It creates `.venv`, installs the
+requirements, creates `.env` from `.env.example` and asks for your Gemini and ElevenLabs keys (press
+Enter to skip). Then double-click `start_session.bat demo` and you're done. To run each part yourself:
+
+```bat
+.venv\Scripts\activate
 uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Open http://127.0.0.1:8000. In a second terminal, run the demo with no hardware:
+**macOS / Linux:**
+
+```bash
+git clone <this repo> recap && cd recap
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # optional: add GEMINI_API_KEY / ELEVENLABS_API_KEY
+uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
+```
+
+Open http://127.0.0.1:8000. Open a second terminal in the repo folder, activate the venv again
+(`.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on macOS/Linux), and run the demo
+with no hardware:
 
 ```bash
 python client/overlay.py                    # captions bar over the whole screen (keep it running)

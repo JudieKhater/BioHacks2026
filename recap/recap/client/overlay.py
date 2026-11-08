@@ -47,6 +47,8 @@ except ImportError:
 KEY = "#ff00fe"          # this colour is made fully transparent (Windows)
 WHITE, BLACK, PRED = "#ffffff", "#000000", "#2b2b2b"
 IS_WIN = sys.platform == "win32"
+MAX_HEIGHT = 0.20        # the overlay never covers more than the bottom 20 % of the screen
+KEEP_CAPTIONS = 30       # finished captions kept in memory; only those that fit are drawn
 
 
 # ------------------------------------------------------------- Windows bits
@@ -166,22 +168,22 @@ class Overlay:
         if args.monitor_bottom is not None:
             bottom = self.root.winfo_screenheight() - args.monitor_bottom
         self.screen_w = right - left
-        height = int((bottom - top) * args.height)
+        # Never cover more than MAX_HEIGHT of the screen, whatever --height or --scale say.
+        share = min(args.height, MAX_HEIGHT)
+        height = min(int(self.root.winfo_screenheight() * share), bottom - top)
         self.root.geometry(f"{self.screen_w}x{height}+{left}+{bottom - height}")
 
-        base = max(18, int(self.root.winfo_screenheight() / 26 * args.scale))
+        base = max(14, int(self.root.winfo_screenheight() / 40 * args.scale))
         family = self._family()
         self.f_now = tkfont.Font(family=family, size=-base, weight="bold")
-        self.f_old = tkfont.Font(family=family, size=-int(base * 0.78), weight="bold")
         self.f_pred = tkfont.Font(family=family, size=-base, slant="italic")
-        self.f_pred_old = tkfont.Font(family=family, size=-int(base * 0.78), slant="italic")
-        self.f_hint = tkfont.Font(family=family, size=-int(base * 0.55))
-        self.f_hint_b = tkfont.Font(family=family, size=-int(base * 0.55), weight="bold")
+        self.f_hint = tkfont.Font(family=family, size=-int(base * 0.7))
+        self.f_hint_b = tkfont.Font(family=family, size=-int(base * 0.7), weight="bold")
 
         self.canvas = tk.Canvas(self.root, bg=self.bg, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
         self.area_h = height
-        self.bottom_gap = int(base * 0.4)
+        self.bottom_gap = int(base * 0.25)
         if args.movable:
             self.root.bind("<Double-Button-1>", lambda e: self.quit())
             self.root.bind("<ButtonPress-1>", self._drag_start)
@@ -250,7 +252,7 @@ class Overlay:
             self.last_activity = time.time()
             entry = {"id": m.get("id"), "text": m.get("text", ""), "predicted": ""}
             if m.get("final"):
-                self.lines = (self.lines + [entry])[-self.args.lines:]
+                self.lines = (self.lines + [entry])[-KEEP_CAPTIONS:]
                 self.partial = None
             else:
                 self.partial = entry   # new words arrived: any earlier guess is stale
@@ -290,11 +292,13 @@ class Overlay:
             lines.append((cur, x))
         return lines
 
-    def _box(self, runs: list[tuple[str, tkfont.Font, str]], bottom: int, pad_x: int, pad_y: int) -> int:
-        """Draw a white highlight box with its text, bottom edge at `bottom`. Returns its top."""
+    def _layout(self, runs: list[tuple[str, tkfont.Font, str]], pad_x: int):
+        """Wrap runs to the caption width. Returns (lines, line height)."""
         max_px = int(self.screen_w * self.args.width) - 2 * pad_x
-        lines = self._wrap(runs, max_px)
-        line_h = max(f.metrics("linespace") for _, f, _ in runs)
+        return self._wrap(runs, max_px), max(f.metrics("linespace") for _, f, _ in runs)
+
+    def _box(self, lines, line_h: int, bottom: int, pad_x: int, pad_y: int) -> int:
+        """Draw a white highlight box with wrapped lines, bottom edge at `bottom`. Returns its top."""
         box_w = max(w for _, w in lines) + 2 * pad_x
         box_h = line_h * len(lines) + 2 * pad_y
         left = (self.screen_w - box_w) // 2
@@ -309,7 +313,9 @@ class Overlay:
 
     def render(self):
         self.canvas.delete("all")
-        shown = (self.lines + ([self.partial] if self.partial else []))[-self.args.lines:]
+        shown = self.lines + ([self.partial] if self.partial else [])
+        if self.args.lines > 0:
+            shown = shown[-self.args.lines:]
         if not self.visible or (not shown and not self.hint):
             self.root.withdraw()
             return
@@ -317,20 +323,39 @@ class Overlay:
             self.root.deiconify()
             self.root.attributes("-topmost", True)
 
-        # Draw bottom-up: newest caption at the bottom, older above, term card on top.
         base = self.f_now.metrics("linespace")
-        gap = max(4, base // 6)
-        y = self.area_h - self.bottom_gap
-        for i, e in reversed(list(enumerate(shown))):
-            latest = i == len(shown) - 1
-            f_txt, f_pr = (self.f_now, self.f_pred) if latest else (self.f_old, self.f_pred_old)
-            runs = [(e["text"], f_txt, BLACK)]
-            if e.get("predicted"):
-                runs.append(("→ " + e["predicted"], f_pr, PRED))
-            y = self._box(runs, y, pad_x=int(base * 0.4), pad_y=int(base * 0.1)) - gap
+        gap = max(2, base // 8)
+        pad_x, pad_y = int(base * 0.4), int(base * 0.08)
+
+        # The term card, if any, sits at the top of the area; captions get the rest.
+        top_limit = 0
         if self.hint:
-            self._box([(f"{self.hint['term']}:", self.f_hint_b, BLACK), (self.hint["text"], self.f_hint, BLACK)],
-                      y - gap, pad_x=int(base * 0.3), pad_y=int(base * 0.08))
+            h_lines, h_lh = self._layout([(f"{self.hint['term']}:", self.f_hint_b, BLACK),
+                                          (self.hint["text"], self.f_hint, BLACK)], pad_x)
+            h_lines = h_lines[:2]                       # at most two lines of definition
+            h_height = h_lh * len(h_lines) + 2 * pad_y
+            if h_height < self.area_h // 2:             # never let it crowd out the captions
+                self._box(h_lines, h_lh, h_height, pad_x, pad_y)
+                top_limit = h_height + gap
+
+        # Each caption starts on a new line. Draw bottom-up (newest at the bottom) until the
+        # area is full; older captions scroll off the top. If a caption is too long for the
+        # space left, show only its newest lines.
+        y = self.area_h - self.bottom_gap
+        for e in reversed(shown):
+            runs = [(e["text"], self.f_now, BLACK)]
+            if e.get("predicted"):
+                runs.append(("→ " + e["predicted"], self.f_pred, PRED))
+            lines, lh = self._layout(runs, pad_x)
+            if not lines:
+                continue
+            room = (y - top_limit - 2 * pad_y) // lh
+            if room <= 0:
+                break
+            cut = len(lines) > room
+            y = self._box(lines[-room:], lh, y, pad_x, pad_y) - gap
+            if cut:
+                break
         self.root.lift()
 
     def _demo(self):
@@ -368,10 +393,12 @@ class Overlay:
 def main():
     ap = argparse.ArgumentParser(description="Recap caption overlay")
     ap.add_argument("--server", default=os.getenv("RECAP_SERVER", "http://127.0.0.1:8000"))
-    ap.add_argument("--lines", type=int, default=2, help="caption lines kept on screen (default 2)")
+    ap.add_argument("--lines", type=int, default=0,
+                    help="max captions on screen (default 0 = as many as fit in the area)")
     ap.add_argument("--scale", type=float, default=1.0, help="text size multiplier")
     ap.add_argument("--width", type=float, default=0.9, help="max caption width as a share of the screen")
-    ap.add_argument("--height", type=float, default=0.45, help="overlay area as a share of the screen height")
+    ap.add_argument("--height", type=float, default=MAX_HEIGHT,
+                    help=f"overlay area as a share of the screen height (max {MAX_HEIGHT})")
     ap.add_argument("--linger", type=float, default=10.0, help="seconds captions stay after he stops")
     ap.add_argument("--hint-seconds", type=float, default=9.0)
     ap.add_argument("--no-hints", action="store_true", help="hide lesson-term definitions")
